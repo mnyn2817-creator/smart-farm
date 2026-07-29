@@ -98,7 +98,6 @@ function createInitialState() {
     color,
     joinCode: newCode(id),
     score: 0,
-    crops: 5,
     players: [],
     round: null,
   });
@@ -128,7 +127,7 @@ function missionCount(value) {
   return Number.isFinite(parsed) ? Math.min(10, Math.max(1, parsed)) : 1;
 }
 
-function makeRound(difficulty, team, requestedCount) {
+function makeRound(team, requestedCount, cycleId = crypto.randomUUID()) {
   const count = missionCount(requestedCount);
   const assigned = new Set(team.players.flatMap((player) => player.roles));
   const availableIssues = Object.keys(ISSUE_DEFINITIONS).filter((issueId) => {
@@ -148,8 +147,8 @@ function makeRound(difficulty, team, requestedCount) {
   if (!canEnvironment && !canFault) {
     throw new Error("센서-컴퓨터-기기 또는 기기-엔지니어 역할을 먼저 배정해 주세요.");
   }
-  if (difficulty === "advanced" && (!canEnvironment || !canFault)) {
-    throw new Error("심화 미션에는 센서·컴퓨터·기기·엔지니어 역할이 모두 필요합니다.");
+  if (!canEnvironment || !canFault) {
+    throw new Error("미션에는 센서·컴퓨터·기기·엔지니어 역할이 모두 필요합니다.");
   }
 
   const environment = () => ({
@@ -166,18 +165,14 @@ function makeRound(difficulty, team, requestedCount) {
     phase: "fault_alert",
   });
 
-  const challenges = Array.from({ length: count }, (_, index) => {
-    if (difficulty === "advanced") {
-      return index % 2 === 0 ? environment() : fault();
-    }
-    return canEnvironment && (!canFault || Math.random() < 0.75)
-      ? environment()
-      : fault();
-  });
+  const faultFirst = Math.random() < 0.5;
+  const challenges = Array.from({ length: count }, (_, index) =>
+    (index + (faultFirst ? 1 : 0)) % 2 === 0 ? environment() : fault(),
+  );
 
   return {
     id: crypto.randomUUID(),
-    difficulty,
+    cycleId,
     status: "playing",
     challengeIndex: 0,
     challenges,
@@ -206,14 +201,11 @@ function advanceRound(team) {
     return;
   }
   round.status = "complete";
-  if (round.challenges.every((challenge) => challenge.success)) {
-    const points = round.challenges.length * (round.difficulty === "advanced" ? 150 : 100);
-    team.score += points;
-    round.message = `${round.difficulty === "advanced" ? "심화" : "기본"} 미션 성공! ${points}점을 획득했습니다.`;
-  } else {
-    team.crops = Math.max(0, team.crops - 1);
-    round.message = "미션 실패. 작물 1개를 잃었습니다.";
-  }
+  const successCount = round.challenges.filter((challenge) => challenge.success).length;
+  const points = successCount * 100;
+  round.points = points;
+  team.score += points;
+  round.message = `${round.challenges.length}문제 중 ${successCount}문제 성공! ${points}점을 획득했습니다.`;
 }
 
 function publicTeam(team) {
@@ -223,6 +215,45 @@ function publicTeam(team) {
     color: presentation.color ?? team.color,
     symbol: presentation.symbol ?? "●",
     players: team.players.map(({ token: _token, ...player }) => ({ ...player })),
+  };
+}
+
+function competitionResult(state) {
+  const cycleIds = TEAM_IDS.map((id) => state.teams[id].round?.cycleId);
+  const sameCycle = cycleIds[0] && cycleIds.every((id) => id === cycleIds[0]);
+  const complete =
+    sameCycle && TEAM_IDS.every((id) => state.teams[id].round?.status === "complete");
+  if (!complete) return { complete: false };
+
+  const leaderboard = TEAM_IDS.map((id) => {
+    const team = state.teams[id];
+    const presentation = TEAM_PRESENTATIONS[id] ?? {};
+    return {
+      id,
+      name: team.name,
+      symbol: presentation.symbol ?? "●",
+      color: presentation.color ?? team.color,
+      score: team.score,
+      cycleScore: team.round?.points ?? 0,
+    };
+  }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id));
+  leaderboard.forEach((team, index) => {
+    team.rank =
+      index > 0 && team.score === leaderboard[index - 1].score
+        ? leaderboard[index - 1].rank
+        : index + 1;
+  });
+  const topScore = leaderboard[0].score;
+  const winners = leaderboard.filter((team) => team.score === topScore);
+
+  return {
+    complete: true,
+    leaderboard,
+    winnerIds: winners.map((team) => team.id),
+    message:
+      winners.length === 1
+        ? `${winners[0].name} 1위!`
+        : `${winners.map((team) => team.name).join(", ")} 공동 1위!`,
   };
 }
 
@@ -354,7 +385,6 @@ export class GameRoom {
           symbol: TEAM_PRESENTATIONS[id]?.symbol ?? "●",
           joinCode: team.joinCode,
           score: team.score,
-          crops: team.crops,
         };
       }),
     });
@@ -400,6 +430,7 @@ export class GameRoom {
       roles: ROLE_DEFINITIONS,
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
+      competition: competitionResult(state),
     };
   }
 
@@ -424,15 +455,14 @@ export class GameRoom {
         if (value) state.signals[issueId] = value.slice(0, 30);
       }
     } else if (action.type === "start_all") {
-      if (!["basic", "advanced"].includes(action.difficulty)) throw new Error("난이도가 올바르지 않습니다.");
+      const cycleId = crypto.randomUUID();
       const rounds = Object.fromEntries(
-        TEAM_IDS.map((id) => [id, makeRound(action.difficulty, state.teams[id], action.count)]),
+        TEAM_IDS.map((id) => [id, makeRound(state.teams[id], action.count, cycleId)]),
       );
       for (const id of TEAM_IDS) state.teams[id].round = rounds[id];
     } else if (action.type === "reset_all") {
       for (const id of TEAM_IDS) {
         state.teams[id].score = 0;
-        state.teams[id].crops = 5;
         state.teams[id].round = null;
       }
     } else {
@@ -444,13 +474,11 @@ export class GameRoom {
         if (!player) throw new Error("참가자를 찾을 수 없습니다.");
         player.roles = [...new Set((action.roles ?? []).filter((role) => VALID_ROLES.has(role)))];
       } else if (action.type === "start_round") {
-        if (!["basic", "advanced"].includes(action.difficulty)) throw new Error("난이도가 올바르지 않습니다.");
-        team.round = makeRound(action.difficulty, team, action.count);
+        team.round = makeRound(team, action.count);
       } else if (action.type === "advance") {
         advanceRound(team);
       } else if (action.type === "reset_team") {
         team.score = 0;
-        team.crops = 5;
         team.round = null;
       } else if (action.type === "remove_player") {
         team.players = team.players.filter((player) => player.id !== action.playerId);
@@ -518,6 +546,7 @@ export class GameRoom {
       roles: ROLE_DEFINITIONS,
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
+      competition: competitionResult(state),
     };
   }
 
@@ -624,12 +653,13 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .count-control{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#405047}.count-control input{width:68px;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;text-align:center;background:#fff}
 .pill{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;background:#e9f0eb;color:#33473a;font-size:13px;font-weight:700}.pills{display:flex;gap:7px;flex-wrap:wrap}
 .mission{min-height:340px;display:grid;align-content:center;text-align:center}.mission .icon{font-size:54px;margin-bottom:14px}.mission h2{font-size:28px}.choices{display:grid;gap:10px;margin-top:18px}.choices button{width:100%;min-height:54px}
-.status-row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.crops{font-size:21px;letter-spacing:2px}.phase{color:#496156;font-size:13px;font-weight:700;text-transform:uppercase}
+.status-row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.phase{color:#496156;font-size:13px;font-weight:700;text-transform:uppercase}
 .round-progress{display:flex;justify-content:center;gap:7px;margin-bottom:18px}.dot{width:11px;height:11px;border-radius:50%;background:#cbd6ce}.dot.on{background:#287a4b}.dot.done{background:#e0a127}
 .team-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--team);color:#fff;padding:16px 18px;border-radius:8px;margin-bottom:14px}.team-banner-symbol{font-size:34px}.team-banner strong{display:block;font-size:22px}.team-banner span{font-size:13px}
 .player-tools{display:flex;justify-content:flex-end;margin-bottom:14px}.role-focus{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-left:7px solid var(--team);padding:16px;margin-bottom:14px}.role-focus-symbol{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;border-radius:50%;background:var(--team);color:#fff;font-size:24px;font-weight:700}.role-focus h2{margin-bottom:4px}.role-focus p{margin-bottom:0}
 .role-guide{margin-bottom:16px}.role-guide h3{margin-bottom:10px}.role-guide-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.role-guide-item{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px}.role-guide-item.active{border:2px solid var(--team);padding:11px}.role-symbol{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#e7eee9;color:#26352b;font-weight:700}.role-guide-item strong{display:block;margin-bottom:3px}.role-guide-item p{font-size:13px;margin-bottom:0;color:var(--muted)}
 .hint-area{margin-top:16px}.hint-box{margin-top:10px;padding:13px;border:2px solid #e0a127;border-radius:7px;background:#fff8df;color:#5b4200;font-weight:700}.signal-dialog{width:min(540px,calc(100% - 28px));border:0;border-radius:8px;padding:0;box-shadow:0 18px 50px rgba(0,0,0,.22)}.signal-dialog::backdrop{background:rgba(20,30,24,.55)}.dialog-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.dialog-head h2{margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;min-height:42px;padding:0;border-radius:50%;background:#e7eee9;color:#26352b;font-size:24px}.signal-rule-list{display:grid;gap:0;padding:8px 18px 18px}.signal-rule{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.signal-rule:last-child{border-bottom:0}.signal-rule strong{text-align:right;color:var(--team)}
+.competition-result{background:#fff;border:2px solid #e0a127;border-radius:8px;padding:18px;margin-bottom:16px}.competition-result h2{margin-bottom:4px}.ranking{display:grid;gap:8px;margin-top:14px}.rank-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;border-left:5px solid var(--rank-color);background:#f7f9f7;padding:11px 12px;border-radius:6px}.rank-number{font-size:20px;font-weight:700}.rank-score{text-align:right}.rank-score strong{display:block}.rank-score span{font-size:12px;color:var(--muted)}
 .footer-note{text-align:center;color:#718078;font-size:12px;margin-top:16px}
 @media(max-width:850px){.grid3,.signals,.role-guide-list{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}}
 `;
@@ -655,7 +685,7 @@ function homePage() {
     `<script>
 fetch("/api/public").then(function(r){return r.json()}).then(function(data){
   document.getElementById("teams").innerHTML=data.teams.map(function(t){
-    return '<a class="card" style="border-top:5px solid '+t.color+';text-decoration:none" href="/play/'+encodeURIComponent(t.joinCode)+'"><strong>'+t.symbol+' '+t.name+'</strong><br><span class="muted">점수 '+t.score+' · 작물 '+t.crops+'개</span></a>';
+    return '<a class="card" style="border-top:5px solid '+t.color+';text-decoration:none" href="/play/'+encodeURIComponent(t.joinCode)+'"><strong>'+t.symbol+' '+t.name+'</strong><br><span class="muted">총점 '+t.score+'점</span></a>';
   }).join("");
 });
 </script>`,
@@ -676,9 +706,10 @@ function adminPage() {
       </section>
       <section id="dashboard" hidden>
         <div id="scores" class="scorebar"></div>
+        <section id="competitionResult" class="competition-result" hidden></section>
         <section class="card" style="margin-bottom:16px">
           <div class="section-head"><div><h2>게임 운영</h2><p class="muted">전체 팀을 동시에 시작하거나 초기화합니다.</p></div>
-          <div class="toolbar"><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="10" value="3" inputmode="numeric"></label><button onclick="startAll('basic')">전체 기본 미션</button><button class="amber" onclick="startAll('advanced')">전체 심화 미션</button><button class="danger" onclick="resetAll()">전체 초기화</button></div></div>
+          <div class="toolbar"><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="10" value="3" inputmode="numeric"></label><button onclick="startAll()">전체 미션 시작</button><button class="danger" onclick="resetAll()">전체 점수 초기화</button></div></div>
           <div id="signals" class="grid signals"></div>
           <button class="secondary" style="margin-top:12px" onclick="saveSignals()">신호 규칙 저장</button>
         </section>
@@ -692,6 +723,7 @@ var setupRequired=false;
 var game=null;
 var roles=[];
 var issues={};
+var competition={complete:false};
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
 async function responseData(response){
   var text=await response.text();
@@ -719,30 +751,31 @@ document.getElementById("authForm").addEventListener("submit",async function(eve
 });
 async function load(){
   try{
-    var data=await api("/api/admin/state");game=data.state;roles=data.roles;issues=data.issues;
+    var data=await api("/api/admin/state");game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;
     document.getElementById("auth").hidden=true;document.getElementById("dashboard").hidden=false;render();
   }catch(error){localStorage.removeItem("farm-admin-token");token="";document.getElementById("auth").hidden=false;document.getElementById("dashboard").hidden=true}
 }
 function render(){
-  document.getElementById("scores").innerHTML=["A","B","C"].map(function(id){var t=game.teams[id];return '<div class="score" style="--team:'+t.color+'"><span>'+esc(t.name)+'</span><strong>'+t.score+'점</strong><span class="muted">작물 '+t.crops+'개 · 참가 '+t.players.length+'명</span></div>'}).join("");
+  document.getElementById("scores").innerHTML=["A","B","C"].map(function(id){var t=game.teams[id];return '<div class="score" style="--team:'+t.color+'"><span>'+esc(t.symbol)+' '+esc(t.name)+'</span><strong>'+t.score+'점</strong><span class="muted">참가 '+t.players.length+'명</span></div>'}).join("");
+  var result=document.getElementById("competitionResult");result.hidden=!competition.complete;result.innerHTML=competition.complete?competitionHtml(competition):"";
   document.getElementById("signals").innerHTML=Object.keys(issues).map(function(id){return '<div class="signal-item"><label>'+esc(issues[id].label)+'</label><input data-signal="'+id+'" value="'+esc(game.signals[id])+'"></div>'}).join("");
   document.getElementById("teams").innerHTML=["A","B","C"].map(teamHtml).join("");
   ["A","B","C"].forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
 }
 function teamHtml(id){
   var t=game.teams[id],round=t.round;
-  var roundText=!round?"대기 중":(round.status==="complete"?round.message:(round.difficulty==="advanced"?"심화":"기본")+" 미션 "+(round.challengeIndex+1)+"/"+round.challenges.length);
+  var roundText=!round?"대기 중":(round.status==="complete"?round.message:"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length);
   var players=t.players.length?t.players.map(function(p){return '<div class="player-row"><div class="player-head"><div><strong>'+esc(p.name)+'</strong> <span class="muted">'+esc(p.grade)+'학년</span></div><button class="danger" onclick="removePlayer(\\''+id+'\\',\\''+p.id+'\\')">삭제</button></div><div class="role-list">'+roles.map(function(r){var checked=p.roles.includes(r.id)?" checked":"";return '<label class="role-check"><input type="checkbox"'+checked+' onchange="setRole(\\''+id+'\\',\\''+p.id+'\\',\\''+r.id+'\\',this.checked)"> '+esc(r.label)+'</label>'}).join("")+'</div></div>'}).join(""):'<p class="muted">아직 참가한 학생이 없습니다.</p>';
-  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>'+t.score+'점</span><span>작물 '+t.crops+'개</span></div></div><div class="toolbar"><button onclick="startTeam(\\''+id+'\\',\\'basic\\')">기본</button><button class="amber" onclick="startTeam(\\''+id+'\\',\\'advanced\\')">심화</button><button class="secondary" onclick="advance(\\''+id+'\\')">다음</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
+  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>총점 '+t.score+'점</span></div></div><div class="toolbar"><button class="secondary" onclick="advance(\\''+id+'\\')">다음</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">팀 점수 초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
 }
-async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;render()}catch(error){alert(error.message)}}
+function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀이 모두 미션을 마쳐 총점을 비교했습니다.</p><div class="ranking">'+data.leaderboard.map(function(t){return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
+async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;render()}catch(error){alert(error.message)}}
 function setRole(teamId,playerId,role,checked){var p=game.teams[teamId].players.find(function(x){return x.id===playerId});var next=p.roles.filter(function(x){return x!==role});if(checked)next.push(role);act({type:"assign_roles",teamId:teamId,playerId:playerId,roles:next})}
 function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
-function startTeam(teamId,difficulty){act({type:"start_round",teamId:teamId,difficulty:difficulty,count:selectedCount()})}
-function startAll(difficulty){act({type:"start_all",difficulty:difficulty,count:selectedCount()})}
+function startAll(){act({type:"start_all",count:selectedCount()})}
 function advance(teamId){act({type:"advance",teamId:teamId})}
-function resetTeam(teamId){if(confirm("이 팀의 점수와 작물을 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
-function resetAll(){if(confirm("모든 팀의 점수와 작물을 초기화할까요?"))act({type:"reset_all"})}
+function resetTeam(teamId){if(confirm("이 팀의 점수를 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
+function resetAll(){if(confirm("모든 팀의 점수를 초기화할까요?"))act({type:"reset_all"})}
 function removePlayer(teamId,playerId){if(confirm("이 참가자를 삭제할까요?"))act({type:"remove_player",teamId:teamId,playerId:playerId})}
 function saveSignals(){var signals={};document.querySelectorAll("[data-signal]").forEach(function(input){signals[input.dataset.signal]=input.value});act({type:"save_signals",signals:signals})}
 setInterval(function(){if(token&&!document.hidden)load()},2000);boot();
@@ -765,9 +798,10 @@ function playerPage(code) {
       <section id="game" hidden>
         <div id="teamBanner" class="team-banner"></div>
         <div class="player-tools"><button class="secondary" onclick="openSignals()">신호 규칙 확인</button></div>
+        <section id="competitionResult" class="competition-result" hidden></section>
         <section id="currentRole" class="role-focus"></section>
         <section class="role-guide"><h3>내가 맡은 역할과 하는 일</h3><div id="roleGuide" class="role-guide-list"></div></section>
-        <div class="status-row"><div><div class="phase" id="phase">WAITING</div><div id="roles" class="pills"></div></div><div id="crops" class="crops"></div></div>
+        <div class="status-row"><div><div class="phase" id="phase">WAITING</div><div id="roles" class="pills"></div></div></div>
         <div id="progress" class="round-progress"></div>
         <section id="mission" class="card mission"></section>
         <p class="footer-note">화면은 2초마다 자동으로 업데이트됩니다.</p>
@@ -825,7 +859,7 @@ function showGame(data){
   document.getElementById("teamLabel").textContent=team.name+" · "+player.name;
   document.getElementById("miniScore").innerHTML="<strong>"+team.score+"점</strong>";
   document.getElementById("teamBanner").innerHTML='<div><strong>'+esc(team.symbol)+' '+esc(team.name)+'</strong><span>'+esc(player.name)+' 구조대원</span></div><div class="team-banner-symbol">'+esc(team.symbol)+'</div>';
-  document.getElementById("crops").textContent="🌱".repeat(team.crops)+"·".repeat(Math.max(0,5-team.crops));
+  var result=document.getElementById("competitionResult");result.hidden=!data.competition.complete;result.innerHTML=data.competition.complete?competitionHtml(data.competition):"";
   document.getElementById("roles").innerHTML=player.roles.length?player.roles.map(function(id){return '<span class="pill">'+esc(roleLabel(id,data))+'</span>'}).join(""):'<span class="pill">역할 배정 대기</span>';
   if(isMyTurn){
     var active=roleInfo(activeId,data);
@@ -837,9 +871,10 @@ function showGame(data){
   document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
   document.getElementById("signalRules").innerHTML=Object.keys(data.issues).map(function(id){return '<div class="signal-rule"><span>'+esc(data.issues[id].label)+'</span><strong>'+esc(data.signals[id])+'</strong></div>'}).join("");
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
-  document.getElementById("phase").textContent=round?(round.difficulty==="advanced"?"심화 미션 ":"기본 미션 ")+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
+  document.getElementById("phase").textContent=round?"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
   document.getElementById("mission").innerHTML=missionHtml(data,challenge);
 }
+function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀의 총점 비교 결과입니다.</p><div class="ranking">'+data.leaderboard.map(function(t){return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
 function wait(icon,title,text){return '<div><div class="icon">'+icon+'</div><h2>'+esc(title)+'</h2><p class="muted">'+esc(text)+'</p></div>'}
 function missionHtml(data,c){
   var team=data.team,player=data.player,round=team.round;
