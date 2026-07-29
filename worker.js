@@ -562,7 +562,7 @@ export class GameRoom {
     if (
       challenge?.phase === "result" &&
       challenge.completedAt &&
-      Date.now() - new Date(challenge.completedAt).getTime() >= 4000
+      Date.now() - new Date(challenge.completedAt).getTime() >= 900
     ) {
       advanceRound(found.team);
       await this.save(state);
@@ -808,7 +808,7 @@ function playerPage(code) {
         <div class="status-row"><div><div class="phase" id="phase">WAITING</div><div id="roles" class="pills"></div></div></div>
         <div id="progress" class="round-progress"></div>
         <section id="mission" class="card mission"></section>
-        <p class="footer-note">화면은 2초마다 자동으로 업데이트됩니다.</p>
+        <p class="footer-note">팀원의 선택과 다음 문제는 자동으로 업데이트됩니다.</p>
       </section>
       <dialog id="signalDialog" class="signal-dialog"><div class="dialog-head"><h2>우리 팀 신호 규칙</h2><button type="button" class="icon-button" aria-label="닫기" onclick="closeSignals()">×</button></div><div id="signalRules" class="signal-rule-list"></div></dialog>
     </main>`,
@@ -817,6 +817,8 @@ var TEAM_CODE=${encodedCode};
 var KEY="farm-player-"+TEAM_CODE;
 var auth=JSON.parse(localStorage.getItem(KEY)||"null");
 var last=null;
+var hintVisible=localStorage.getItem(KEY+"-hint")==="1";
+var resultTimer=null;
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
 async function responseData(response){
   var text=await response.text();
@@ -851,8 +853,9 @@ function activeRoleId(data,c){
 }
 function openSignals(){var dialog=document.getElementById("signalDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
 function closeSignals(){var dialog=document.getElementById("signalDialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open")}
-function toggleHint(){var box=document.getElementById("hintBox");if(box)box.hidden=!box.hidden}
-function hint(text){return '<div class="hint-area"><button class="secondary" onclick="toggleHint()">힌트 보기</button><div id="hintBox" class="hint-box" hidden>'+esc(text)+'</div></div>'}
+function toggleHint(){hintVisible=!hintVisible;localStorage.setItem(KEY+"-hint",hintVisible?"1":"0");var box=document.getElementById("hintBox"),button=document.getElementById("hintToggle");if(box)box.hidden=!hintVisible;if(button)button.textContent=hintVisible?"힌트 닫기":"힌트 보기"}
+function hint(text){return '<div class="hint-area"><button id="hintToggle" class="secondary" onclick="toggleHint()">'+(hintVisible?"힌트 닫기":"힌트 보기")+'</button><div id="hintBox" class="hint-box"'+(hintVisible?"":" hidden")+'>'+esc(text)+'</div></div>'}
+function scheduleResultAdvance(c){if(resultTimer){clearTimeout(resultTimer);resultTimer=null}if(!c||c.phase!=="result"||!c.completedAt)return;var elapsed=Date.now()-new Date(c.completedAt).getTime(),delay=Math.max(50,950-elapsed);resultTimer=setTimeout(function(){resultTimer=null;if(auth&&!document.hidden)load()},delay)}
 function showGame(data){
   var team=data.team,player=data.player,round=team.round,challenge=round&&round.challenges[round.challengeIndex];
   var activeId=activeRoleId(data,challenge),isMyTurn=activeId&&player.roles.includes(activeId);
@@ -877,6 +880,7 @@ function showGame(data){
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
   document.getElementById("phase").textContent=round?"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
   document.getElementById("mission").innerHTML=missionHtml(data,challenge);
+  scheduleResultAdvance(challenge);
 }
 function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀의 총점 비교 결과입니다.</p><div class="ranking">'+data.leaderboard.map(function(t){return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
 function wait(icon,title,text){return '<div><div class="icon">'+icon+'</div><h2>'+esc(title)+'</h2><p class="muted">'+esc(text)+'</p></div>'}
