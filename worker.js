@@ -237,9 +237,13 @@ function errorMessage(error) {
 }
 
 export default {
-  fetch(request, env) {
-    const id = env.GAME_ROOM.idFromName("smart-farm-main");
-    return env.GAME_ROOM.get(id).fetch(request);
+  async fetch(request, env) {
+    try {
+      const id = env.GAME_ROOM.idFromName("smart-farm-main");
+      return await env.GAME_ROOM.get(id).fetch(request);
+    } catch (error) {
+      return json({ error: errorMessage(error) }, 500);
+    }
   },
 };
 
@@ -671,12 +675,17 @@ var game=null;
 var roles=[];
 var issues={};
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
+async function responseData(response){
+  var text=await response.text();
+  try{return text?JSON.parse(text):{}}
+  catch(error){throw new Error("서버가 올바르지 않은 응답을 보냈습니다. 잠시 후 다시 시도해 주세요. ("+response.status+")")}
+}
 function api(path,options){
   options=options||{};options.headers=Object.assign({"content-type":"application/json","authorization":"Bearer "+token},options.headers||{});
-  return fetch(path,options).then(async function(response){var data=await response.json();if(!response.ok)throw new Error(data.error||"요청 실패");return data});
+  return fetch(path,options).then(async function(response){var data=await responseData(response);if(!response.ok)throw new Error(data.error||"요청 실패");return data});
 }
 async function boot(){
-  var info=await fetch("/api/public").then(function(r){return r.json()});setupRequired=info.setupRequired;
+  var info=await fetch("/api/public").then(responseData);setupRequired=info.setupRequired;
   document.getElementById("authTitle").textContent=setupRequired?"관리자 비밀번호 만들기":"관리자 로그인";
   document.getElementById("authHelp").textContent=setupRequired?"처음 한 번만 사용할 관리자 비밀번호를 만들어 주세요.":"설정한 관리자 비밀번호를 입력하세요.";
   document.getElementById("authButton").textContent=setupRequired?"비밀번호 만들기":"로그인";
@@ -747,19 +756,24 @@ var KEY="farm-player-"+TEAM_CODE;
 var auth=JSON.parse(localStorage.getItem(KEY)||"null");
 var last=null;
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
+async function responseData(response){
+  var text=await response.text();
+  try{return text?JSON.parse(text):{}}
+  catch(error){throw new Error("서버가 올바르지 않은 응답을 보냈습니다. 잠시 후 다시 시도해 주세요. ("+response.status+")")}
+}
 function headers(){return {"content-type":"application/json","x-player-id":auth.playerId,"x-player-token":auth.playerToken}}
 async function load(){
   if(!auth)return;
-  try{var response=await fetch("/api/player/state",{headers:headers(),cache:"no-store"});var data=await response.json();if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
+  try{var response=await fetch("/api/player/state",{headers:headers(),cache:"no-store"});var data=await responseData(response);if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
   catch(error){localStorage.removeItem(KEY);auth=null;document.getElementById("join").hidden=false;document.getElementById("game").hidden=true}
 }
 document.getElementById("joinForm").addEventListener("submit",async function(event){
   event.preventDefault();var box=document.getElementById("joinMessage");box.hidden=true;
-  try{var response=await fetch("/api/join",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:TEAM_CODE,name:document.getElementById("name").value,grade:document.getElementById("grade").value})});var data=await response.json();if(!response.ok)throw new Error(data.error);auth=data;localStorage.setItem(KEY,JSON.stringify(auth));document.getElementById("join").hidden=true;load()}
+  try{var response=await fetch("/api/join",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:TEAM_CODE,name:document.getElementById("name").value,grade:document.getElementById("grade").value})});var data=await responseData(response);if(!response.ok)throw new Error(data.error);auth=data;localStorage.setItem(KEY,JSON.stringify(auth));document.getElementById("join").hidden=true;load()}
   catch(error){box.textContent=error.message;box.hidden=false}
 });
 async function act(action){
-  try{var response=await fetch("/api/player/action",{method:"POST",headers:headers(),body:JSON.stringify(action)});var data=await response.json();if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
+  try{var response=await fetch("/api/player/action",{method:"POST",headers:headers(),body:JSON.stringify(action)});var data=await responseData(response);if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
   catch(error){alert(error.message)}
 }
 function roleLabel(id,data){var role=data.roles.find(function(item){return item.id===id});return role?role.label:id}
