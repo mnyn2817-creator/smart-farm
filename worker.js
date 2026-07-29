@@ -12,6 +12,8 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
+const APP_VERSION = "2026-07-29-1";
+
 const ISSUE_DEFINITIONS = {
   heat: {
     label: "온도 상승",
@@ -155,6 +157,15 @@ function createInitialState() {
 
 function currentChallenge(team) {
   return team.round?.challenges[team.round.challengeIndex] ?? null;
+}
+
+function normalizeDevicePhase(challenge) {
+  if (challenge?.kind !== "environment" || challenge.phase !== "device_running") {
+    return false;
+  }
+  challenge.phase = "device";
+  challenge.deviceStartedAt ??= new Date().toISOString();
+  return true;
 }
 
 function challengeRole(challenge) {
@@ -401,7 +412,10 @@ export class GameRoom {
       if (request.method === "GET" && url.pathname.startsWith("/play/")) {
         const code = decodeURIComponent(url.pathname.slice(6));
         return new Response(playerPage(code), {
-          headers: { "content-type": "text/html; charset=utf-8" },
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          },
         });
       }
       if (url.pathname === "/api/public" && request.method === "GET") {
@@ -613,6 +627,7 @@ export class GameRoom {
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
       deviceScenes: DEVICE_SCENES,
+      appVersion: APP_VERSION,
       competition: competitionResult(state),
     };
   }
@@ -622,14 +637,16 @@ export class GameRoom {
     const found = this.findPlayer(request, state);
     if (!found) return json({ error: "참가 정보를 찾을 수 없습니다." }, 401);
     const challenge = currentChallenge(found.team);
+    let stateChanged = normalizeDevicePhase(challenge);
     if (
       challenge?.phase === "result" &&
       challenge.completedAt &&
       Date.now() - new Date(challenge.completedAt).getTime() >= 900
     ) {
       advanceRound(found.team);
-      await this.save(state);
+      stateChanged = true;
     }
+    if (stateChanged) await this.save(state);
     return json(this.playerPayload(state, found.team, found.player));
   }
 
@@ -643,6 +660,7 @@ export class GameRoom {
     if (!challenge || !team.round || team.round.status !== "playing") {
       return json(this.playerPayload(state, team, player));
     }
+    normalizeDevicePhase(challenge);
 
     if (
       action.type === "send_signal" &&
@@ -667,12 +685,21 @@ export class GameRoom {
       challenge.selectedDevice &&
       player.roles.includes(challenge.selectedDevice)
     ) {
-      challenge.phase = "device_running";
-      challenge.deviceStartedAt = new Date().toISOString();
+      if (challenge.deviceStartedAt) {
+        const issue = ISSUE_DEFINITIONS[challenge.issueId];
+        completeChallenge(
+          team,
+          challenge.selectedSignal === state.signals[challenge.issueId] &&
+            challenge.selectedDevice === issue.deviceRole,
+        );
+      } else {
+        challenge.deviceStartedAt = new Date().toISOString();
+      }
     } else if (
       action.type === "stop_device" &&
       challenge.kind === "environment" &&
-      challenge.phase === "device_running" &&
+      challenge.phase === "device" &&
+      challenge.deviceStartedAt &&
       challenge.selectedDevice &&
       player.roles.includes(challenge.selectedDevice)
     ) {
@@ -895,6 +922,7 @@ setInterval(function(){if(token&&!document.hidden&&!hasPendingRoleSaves())load()
 
 function playerPage(code) {
   const encodedCode = JSON.stringify(code);
+  const encodedVersion = JSON.stringify(APP_VERSION);
   return layout(
     "플레이어 | 스마트 농장",
     `<main id="playerShell" class="shell">
@@ -920,6 +948,7 @@ function playerPage(code) {
     </main>`,
     `<script>
 var TEAM_CODE=${encodedCode};
+var PAGE_VERSION=${encodedVersion};
 var KEY="farm-player-"+TEAM_CODE;
 var auth=JSON.parse(localStorage.getItem(KEY)||"null");
 var last=null;
@@ -934,7 +963,7 @@ async function responseData(response){
 function headers(){return {"content-type":"application/json","x-player-id":auth.playerId,"x-player-token":auth.playerToken}}
 async function load(){
   if(!auth)return;
-  try{var response=await fetch("/api/player/state",{headers:headers(),cache:"no-store"});var data=await responseData(response);if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
+  try{var response=await fetch("/api/player/state",{headers:headers(),cache:"no-store"});var data=await responseData(response);if(!response.ok)throw new Error(data.error);if(data.appVersion&&data.appVersion!==PAGE_VERSION){location.reload();return}last=data;showGame(data)}
   catch(error){localStorage.removeItem(KEY);auth=null;document.getElementById("join").hidden=false;document.getElementById("game").hidden=true}
 }
 document.getElementById("joinForm").addEventListener("submit",async function(event){
@@ -1009,12 +1038,8 @@ function missionHtml(data,c){
     return wait("🔄","컴퓨터가 판단 중","전달된 신호를 바탕으로 작동할 기기를 고르고 있습니다.");
   }
   if(c.kind==="environment"&&c.phase==="device"){
-    if(player.roles.includes(c.selectedDevice)){var scene=deviceScene(c.selectedDevice,data);return '<div><div class="device-visual" role="img" aria-label="'+esc(roleLabel(c.selectedDevice,data))+' 작동 전과 후" style="background-position:'+scene.position+'"></div><h2>'+esc(roleLabel(c.selectedDevice,data))+'를 작동하세요</h2><p>컴퓨터의 명령을 확인하고 기기를 시작하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">'+esc(scene.startLabel)+'</button></div>'+hint(scene.startLabel+" 버튼을 누르세요. 농장 상태가 바뀌면 기기를 멈추는 단계가 나와요.")+'</div>'}
+    if(player.roles.includes(c.selectedDevice)){var scene=deviceScene(c.selectedDevice,data);if(c.deviceStartedAt)return '<div><div class="device-visual" role="img" aria-label="'+esc(roleLabel(c.selectedDevice,data))+' 작동 결과" style="background-position:'+scene.position+'"></div><h2>'+esc(scene.runningTitle)+'</h2><div class="device-status"><strong>농장 상태 확인</strong><p>'+esc(scene.readyText)+'</p></div><div class="choices"><button class="amber" onclick="act({type:\\'stop_device\\'})">'+esc(scene.stopLabel)+'</button></div>'+hint(scene.readyText+" 아래의 "+scene.stopLabel+" 버튼을 누르면 완료돼요.")+'</div>';return '<div><div class="device-visual" role="img" aria-label="'+esc(roleLabel(c.selectedDevice,data))+' 작동 전과 후" style="background-position:'+scene.position+'"></div><h2>'+esc(roleLabel(c.selectedDevice,data))+'를 작동하세요</h2><p>컴퓨터의 명령을 확인하고 기기를 시작하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">'+esc(scene.startLabel)+'</button></div>'+hint(scene.startLabel+" 버튼을 누르세요. 농장 상태가 바뀌면 기기를 멈추는 단계가 나와요.")+'</div>'}
     return wait("⚙️","기기 작동 준비 중",roleLabel(c.selectedDevice,data)+" 담당자가 기기를 시작해야 합니다.");
-  }
-  if(c.kind==="environment"&&c.phase==="device_running"){
-    if(player.roles.includes(c.selectedDevice)){var runningScene=deviceScene(c.selectedDevice,data);return '<div><div class="device-visual" role="img" aria-label="'+esc(roleLabel(c.selectedDevice,data))+' 작동 결과" style="background-position:'+runningScene.position+'"></div><h2>'+esc(runningScene.runningTitle)+'</h2><div class="device-status"><strong>농장 상태 확인</strong><p>'+esc(runningScene.readyText)+'</p></div><div class="choices"><button class="amber" onclick="act({type:\\'stop_device\\'})">'+esc(runningScene.stopLabel)+'</button></div>'+hint(runningScene.readyText+" 아래의 "+runningScene.stopLabel+" 버튼을 누르면 완료돼요.")+'</div>'}
-    return wait("⚙️","기기가 농장을 조절하는 중",roleLabel(c.selectedDevice,data)+" 담당자가 정상 상태를 확인하고 기기를 멈춰야 합니다.");
   }
   if(c.kind==="fault"&&c.phase==="fault_alert"){
     if(c.faultId&&player.roles.includes(c.targetDevice)){var fault=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">⚠️</div><h2>'+esc(fault.label)+'</h2><p>'+esc(fault.detail)+'</p><p><strong>'+esc(roleLabel(c.targetDevice,data))+'</strong> 담당자가 엔지니어에게 알려야 합니다.</p><div class="choices"><button class="danger" onclick="act({type:\\'report_fault\\'})">고장 신호 보내기</button></div>'+hint("기기가 고장 났어요. 고장 신호 보내기 버튼을 눌러 엔지니어에게 알려 주세요.")+'</div>'}
