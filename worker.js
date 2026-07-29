@@ -157,6 +157,29 @@ function currentChallenge(team) {
   return team.round?.challenges[team.round.challengeIndex] ?? null;
 }
 
+function challengeRole(challenge) {
+  if (!challenge || challenge.phase === "result") return null;
+  if (challenge.kind === "environment" && challenge.phase === "sensor") {
+    return ISSUE_DEFINITIONS[challenge.issueId]?.sensorRole ?? null;
+  }
+  if (challenge.kind === "environment" && challenge.phase === "computer") {
+    return "computer";
+  }
+  if (
+    challenge.kind === "environment" &&
+    (challenge.phase === "device" || challenge.phase === "device_running")
+  ) {
+    return challenge.selectedDevice ?? null;
+  }
+  if (challenge.kind === "fault" && challenge.phase === "fault_alert") {
+    return challenge.targetDevice ?? null;
+  }
+  if (challenge.kind === "fault" && challenge.phase === "repair") {
+    return "engineer";
+  }
+  return null;
+}
+
 function roleLabel(roleId) {
   return ROLE_DEFINITIONS.find((role) => role.id === roleId)?.label ?? roleId;
 }
@@ -564,6 +587,7 @@ export class GameRoom {
     const challenge = currentChallenge(teamView);
 
     if (challenge && challenge.phase !== "result") {
+      challenge.activeRole = challengeRole(challenge);
       if (
         challenge.kind === "environment" &&
         challenge.issueId &&
@@ -776,6 +800,9 @@ var game=null;
 var roles=[];
 var issues={};
 var competition={complete:false};
+var roleDrafts={};
+var roleTimers={};
+var roleSaving={};
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
 async function responseData(response){
   var text=await response.text();
@@ -822,15 +849,46 @@ function teamHtml(id){
 }
 function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀이 모두 미션을 마쳐 총점을 비교했습니다.</p><div class="ranking">'+data.leaderboard.map(function(t){return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
 async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;render()}catch(error){alert(error.message)}}
-function setRole(teamId,playerId,role,checked){var p=game.teams[teamId].players.find(function(x){return x.id===playerId});var next=p.roles.filter(function(x){return x!==role});if(checked)next.push(role);act({type:"assign_roles",teamId:teamId,playerId:playerId,roles:next})}
+function setRole(teamId,playerId,role,checked){
+  var key=teamId+":"+playerId,p=game.teams[teamId].players.find(function(x){return x.id===playerId});
+  var current=roleDrafts[key]||p.roles,next=current.filter(function(x){return x!==role});
+  if(checked)next.push(role);
+  roleDrafts[key]=next;p.roles=next;
+  clearTimeout(roleTimers[key]);
+  roleTimers[key]=setTimeout(function(){delete roleTimers[key];saveRoles(teamId,playerId,key)},250);
+}
+async function saveRoles(teamId,playerId,key){
+  if(roleSaving[key])return;
+  roleSaving[key]=true;var data=null;
+  try{
+    while(roleDrafts[key]){
+      var next=roleDrafts[key];delete roleDrafts[key];
+      data=await api("/api/admin/action",{method:"POST",body:JSON.stringify({type:"assign_roles",teamId:teamId,playerId:playerId,roles:next})});
+    }
+    if(data){game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;render()}
+  }catch(error){alert(error.message);load()}
+  finally{delete roleSaving[key];if(roleDrafts[key])saveRoles(teamId,playerId,key)}
+}
+function hasPendingRoleSaves(){return Object.keys(roleDrafts).length>0||Object.keys(roleSaving).length>0}
+function flushRoleSaves(){
+  Object.keys(roleTimers).forEach(function(key){
+    clearTimeout(roleTimers[key]);delete roleTimers[key];
+    var split=key.indexOf(":");
+    saveRoles(key.slice(0,split),key.slice(split+1),key);
+  });
+  return new Promise(function(resolve){
+    function check(){if(hasPendingRoleSaves())setTimeout(check,25);else resolve()}
+    check();
+  });
+}
 function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
-function startTeam(teamId){act({type:"start_round",teamId:teamId,count:selectedCount()})}
-function startAll(){act({type:"start_all",count:selectedCount()})}
+async function startTeam(teamId){await flushRoleSaves();act({type:"start_round",teamId:teamId,count:selectedCount()})}
+async function startAll(){await flushRoleSaves();act({type:"start_all",count:selectedCount()})}
 function resetTeam(teamId){if(confirm("이 팀의 점수를 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
 function resetAll(){if(confirm("모든 팀의 점수를 초기화할까요?"))act({type:"reset_all"})}
 function removePlayer(teamId,playerId){if(confirm("이 참가자를 삭제할까요?"))act({type:"remove_player",teamId:teamId,playerId:playerId})}
 function saveSignals(){var signals={};document.querySelectorAll("[data-signal]").forEach(function(input){signals[input.dataset.signal]=input.value});act({type:"save_signals",signals:signals})}
-setInterval(function(){if(token&&!document.hidden)load()},2000);boot();
+setInterval(function(){if(token&&!document.hidden&&!hasPendingRoleSaves())load()},2000);boot();
 </script>`,
   );
 }
@@ -893,6 +951,7 @@ function roleLabel(id,data){return roleInfo(id,data).label}
 function deviceScene(id,data){return data.deviceScenes[id]||{position:"100% 100%",startLabel:"기기 작동 시작",runningTitle:"기기가 농장 상태를 조절하고 있어요",readyText:"농장 상태가 정상입니다. 기기를 멈춰 주세요.",stopLabel:"기기 작동 중지"}}
 function activeRoleId(data,c){
   if(!c||c.phase==="result")return null;
+  if(c.activeRole)return c.activeRole;
   if(c.kind==="environment"&&c.phase==="sensor"&&c.issueId)return data.issues[c.issueId].sensorRole;
   if(c.kind==="environment"&&c.phase==="computer")return "computer";
   if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return c.selectedDevice||null;
@@ -921,8 +980,9 @@ function showGame(data){
     var active=roleInfo(activeId,data);
     document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">'+esc(active.symbol)+'</div><div><p class="phase">지금은 내가 움직일 차례</p><h2>'+esc(active.label)+'</h2><p>'+esc(active.description)+'</p></div>';
   }else{
-    var waitingTitle=!player.roles.length?"역할 배정을 기다려요":!round?"미션 시작을 기다려요":round.status==="complete"?"미션을 마쳤어요":"팀원의 선택을 기다려요";
-    document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">…</div><div><p class="phase">현재 수행 역할</p><h2>'+waitingTitle+'</h2><p>'+(player.roles.length?"내 역할 차례가 오면 이곳에 크게 표시됩니다.":"선생님이 역할을 배정하면 역할 이름과 하는 일이 표시됩니다.")+'</p></div>';
+    var waitingTitle=!player.roles.length?"역할 배정을 기다려요":!round?"미션 시작을 기다려요":round.status==="complete"?"미션을 마쳤어요":activeId?roleLabel(activeId,data)+" 담당 차례예요":"팀원의 선택을 기다려요";
+    var waitingText=!player.roles.length?"선생님이 역할을 배정하면 역할 이름과 하는 일이 표시됩니다.":activeId?"현재 "+roleLabel(activeId,data)+" 담당자가 진행하고 있습니다.":"내 역할 차례가 오면 이곳에 크게 표시됩니다.";
+    document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">…</div><div><p class="phase">현재 수행 역할</p><h2>'+esc(waitingTitle)+'</h2><p>'+esc(waitingText)+'</p></div>';
   }
   document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
   document.getElementById("signalRules").innerHTML=Object.keys(data.issues).map(function(id){return '<div class="signal-rule"><span>'+esc(data.issues[id].label)+'</span><strong>'+esc(data.signals[id])+'</strong></div>'}).join("");
