@@ -12,7 +12,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-07-29-1";
+const APP_VERSION = "2026-07-29-2";
 
 const ISSUE_DEFINITIONS = {
   heat: {
@@ -628,6 +628,17 @@ export class GameRoom {
       faults: FAULTS,
       deviceScenes: DEVICE_SCENES,
       appVersion: APP_VERSION,
+      teamScores: TEAM_IDS.map((id) => {
+        const scoreTeam = state.teams[id];
+        const presentation = TEAM_PRESENTATIONS[id] ?? {};
+        return {
+          id,
+          name: scoreTeam.name,
+          symbol: presentation.symbol ?? "●",
+          color: presentation.color ?? scoreTeam.color,
+          score: scoreTeam.score,
+        };
+      }),
       competition: competitionResult(state),
     };
   }
@@ -759,9 +770,10 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .status-row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.phase{color:#496156;font-size:13px;font-weight:700;text-transform:uppercase}
 .round-progress{display:flex;justify-content:center;gap:7px;margin-bottom:18px}.dot{width:11px;height:11px;border-radius:50%;background:#cbd6ce}.dot.on{background:#287a4b}.dot.done{background:#e0a127}
 .team-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--team);color:#fff;padding:16px 18px;border-radius:8px;margin-bottom:14px}.team-banner-symbol{font-size:34px}.team-banner strong{display:block;font-size:22px}.team-banner span{font-size:13px}
-.player-tools{display:flex;justify-content:flex-end;margin-bottom:14px}.role-focus{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-left:7px solid var(--team);padding:16px;margin-bottom:14px}.role-focus-symbol{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;border-radius:50%;background:var(--team);color:#fff;font-size:24px;font-weight:700}.role-focus h2{margin-bottom:4px}.role-focus p{margin-bottom:0}
+.player-tools{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:14px}.role-focus{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-left:7px solid var(--team);padding:16px;margin-bottom:14px}.role-focus-symbol{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;border-radius:50%;background:var(--team);color:#fff;font-size:24px;font-weight:700}.role-focus h2{margin-bottom:4px}.role-focus p{margin-bottom:0}
 .role-guide{margin-bottom:16px}.role-guide h3{margin-bottom:10px}.role-guide-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.role-guide-item{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px}.role-guide-item.active{border:2px solid var(--team);padding:11px}.role-symbol{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#e7eee9;color:#26352b;font-weight:700}.role-guide-item strong{display:block;margin-bottom:3px}.role-guide-item p{font-size:13px;margin-bottom:0;color:var(--muted)}
 .hint-area{margin-top:16px}.hint-box{margin-top:10px;padding:13px;border:2px solid #e0a127;border-radius:7px;background:#fff8df;color:#5b4200;font-weight:700}.signal-dialog{width:min(540px,calc(100% - 28px));border:0;border-radius:8px;padding:0;box-shadow:0 18px 50px rgba(0,0,0,.22)}.signal-dialog::backdrop{background:rgba(20,30,24,.55)}.dialog-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.dialog-head h2{margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;min-height:42px;padding:0;border-radius:50%;background:#e7eee9;color:#26352b;font-size:24px}.signal-rule-list{display:grid;gap:0;padding:8px 18px 18px}.signal-rule{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.signal-rule:last-child{border-bottom:0}.signal-rule strong{text-align:right;color:var(--team)}
+.team-score-list{display:grid;gap:9px;padding:14px 18px 18px}.team-score-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;border-left:6px solid var(--score-color);background:#f5f8f6;padding:14px;border-radius:6px}.team-score-row strong{font-size:18px}.team-score-points{font-size:24px;font-weight:700;color:#24352a}
 .competition-result{background:#fff;border:2px solid #e0a127;border-radius:8px;padding:18px;margin-bottom:16px}.competition-result h2{margin-bottom:4px}.ranking{display:grid;gap:8px;margin-top:14px}.rank-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;border-left:5px solid var(--rank-color);background:#f7f9f7;padding:11px 12px;border-radius:6px}.rank-number{font-size:20px;font-weight:700}.rank-score{text-align:right}.rank-score strong{display:block}.rank-score span{font-size:12px;color:var(--muted)}
 .footer-note{text-align:center;color:#718078;font-size:12px;margin-top:16px}
 @media(max-width:850px){.grid3,.signals,.role-guide-list{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}}
@@ -935,7 +947,7 @@ function playerPage(code) {
       </section>
       <section id="game" hidden>
         <div id="teamBanner" class="team-banner"></div>
-        <div class="player-tools"><button class="secondary" onclick="openSignals()">신호 규칙 확인</button></div>
+        <div class="player-tools"><button class="secondary" onclick="openScores()">전체 팀 점수</button><button class="secondary" onclick="openSignals()">신호 규칙 확인</button></div>
         <section id="competitionResult" class="competition-result" hidden></section>
         <section id="currentRole" class="role-focus"></section>
         <section class="role-guide"><h3>내가 맡은 역할과 하는 일</h3><div id="roleGuide" class="role-guide-list"></div></section>
@@ -944,6 +956,7 @@ function playerPage(code) {
         <section id="mission" class="card mission"></section>
         <p class="footer-note">팀원의 선택과 다음 문제는 자동으로 업데이트됩니다.</p>
       </section>
+      <dialog id="scoreDialog" class="signal-dialog"><div class="dialog-head"><h2>전체 팀 점수</h2><button type="button" class="icon-button" aria-label="닫기" onclick="closeScores()">×</button></div><div id="teamScores" class="team-score-list"></div></dialog>
       <dialog id="signalDialog" class="signal-dialog"><div class="dialog-head"><h2>우리 팀 신호 규칙</h2><button type="button" class="icon-button" aria-label="닫기" onclick="closeSignals()">×</button></div><div id="signalRules" class="signal-rule-list"></div></dialog>
     </main>`,
     `<script>
@@ -990,6 +1003,8 @@ function activeRoleId(data,c){
 }
 function openSignals(){var dialog=document.getElementById("signalDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
 function closeSignals(){var dialog=document.getElementById("signalDialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open")}
+function openScores(){var dialog=document.getElementById("scoreDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
+function closeScores(){var dialog=document.getElementById("scoreDialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open")}
 function toggleHint(){hintVisible=!hintVisible;localStorage.setItem(KEY+"-hint",hintVisible?"1":"0");var box=document.getElementById("hintBox"),button=document.getElementById("hintToggle");if(box)box.hidden=!hintVisible;if(button)button.textContent=hintVisible?"힌트 닫기":"힌트 보기"}
 function hint(text){return '<div class="hint-area"><button id="hintToggle" class="secondary" onclick="toggleHint()">'+(hintVisible?"힌트 닫기":"힌트 보기")+'</button><div id="hintBox" class="hint-box"'+(hintVisible?"":" hidden")+'>'+esc(text)+'</div></div>'}
 function scheduleResultAdvance(c){if(resultTimer){clearTimeout(resultTimer);resultTimer=null}if(!c||c.phase!=="result"||!c.completedAt)return;var elapsed=Date.now()-new Date(c.completedAt).getTime(),delay=Math.max(50,950-elapsed);resultTimer=setTimeout(function(){resultTimer=null;if(auth&&!document.hidden)load()},delay)}
@@ -1014,6 +1029,7 @@ function showGame(data){
     document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">…</div><div><p class="phase">현재 수행 역할</p><h2>'+esc(waitingTitle)+'</h2><p>'+esc(waitingText)+'</p></div>';
   }
   document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
+  document.getElementById("teamScores").innerHTML=data.teamScores.map(function(item){return '<div class="team-score-row" style="--score-color:'+item.color+'"><strong>'+esc(item.symbol)+' '+esc(item.name)+'</strong><span class="team-score-points">'+item.score+'점</span></div>'}).join("");
   document.getElementById("signalRules").innerHTML=Object.keys(data.issues).map(function(id){return '<div class="signal-rule"><span>'+esc(data.issues[id].label)+'</span><strong>'+esc(data.signals[id])+'</strong></div>'}).join("");
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
   document.getElementById("phase").textContent=round?"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
