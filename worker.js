@@ -1,15 +1,15 @@
 const ROLE_DEFINITIONS = [
-  { id: "sensor_temp", group: "센서", label: "온도 센서" },
-  { id: "sensor_water", group: "센서", label: "물 센서" },
-  { id: "sensor_light", group: "센서", label: "햇빛 센서" },
-  { id: "sensor_pest", group: "센서", label: "병충해 센서" },
-  { id: "computer", group: "컴퓨터", label: "메인 컴퓨터" },
-  { id: "device_fan", group: "기기", label: "환풍기" },
-  { id: "device_sprinkler", group: "기기", label: "스프링클러" },
-  { id: "device_shade", group: "기기", label: "햇빛 차단막" },
-  { id: "device_light", group: "기기", label: "생장 조명" },
-  { id: "device_pest", group: "기기", label: "방제기" },
-  { id: "engineer", group: "기술", label: "엔지니어" },
+  { id: "sensor_temp", group: "센서", label: "온도 센서", symbol: "℃", description: "농장의 온도가 너무 높거나 낮은지 살펴봅니다." },
+  { id: "sensor_water", group: "센서", label: "물 센서", symbol: "💧", description: "흙에 물이 충분한지 살펴봅니다." },
+  { id: "sensor_light", group: "센서", label: "햇빛 센서", symbol: "☀", description: "햇빛이 부족하거나 너무 강한지 살펴봅니다." },
+  { id: "sensor_pest", group: "센서", label: "병충해 센서", symbol: "!", description: "작물에 해충이나 병의 흔적이 있는지 살펴봅니다." },
+  { id: "computer", group: "컴퓨터", label: "메인 컴퓨터", symbol: "▣", description: "센서의 신호를 읽고 어떤 기기를 움직일지 결정합니다." },
+  { id: "device_fan", group: "기기", label: "환풍기", symbol: "↻", description: "더운 공기를 밖으로 보내 농장의 온도를 낮춥니다." },
+  { id: "device_sprinkler", group: "기기", label: "스프링클러", symbol: "≋", description: "물이 부족한 작물과 흙에 물을 뿌립니다." },
+  { id: "device_shade", group: "기기", label: "햇빛 차단막", symbol: "▰", description: "너무 강한 햇빛을 가려 작물을 보호합니다." },
+  { id: "device_light", group: "기기", label: "생장 조명", symbol: "✦", description: "햇빛이 부족할 때 작물에 필요한 빛을 비춥니다." },
+  { id: "device_pest", group: "기기", label: "방제기", symbol: "◎", description: "병충해가 퍼지지 않도록 작물을 보호합니다." },
+  { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
 const ISSUE_DEFINITIONS = {
@@ -75,6 +75,11 @@ const FAULTS = [
 ];
 
 const TEAM_IDS = ["A", "B", "C"];
+const TEAM_PRESENTATIONS = {
+  A: { symbol: "🌱", color: "#287a4b" },
+  B: { symbol: "☀", color: "#c97b0b" },
+  C: { symbol: "💧", color: "#2275a5" },
+};
 const VALID_ROLES = new Set(ROLE_DEFINITIONS.map((role) => role.id));
 const DEVICE_ROLES = ROLE_DEFINITIONS.filter((role) => role.group === "기기");
 
@@ -118,7 +123,13 @@ function roleLabel(roleId) {
   return ROLE_DEFINITIONS.find((role) => role.id === roleId)?.label ?? roleId;
 }
 
-function makeRound(difficulty, team) {
+function missionCount(value) {
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) ? Math.min(10, Math.max(1, parsed)) : 1;
+}
+
+function makeRound(difficulty, team, requestedCount) {
+  const count = missionCount(requestedCount);
   const assigned = new Set(team.players.flatMap((player) => player.roles));
   const availableIssues = Object.keys(ISSUE_DEFINITIONS).filter((issueId) => {
     const issue = ISSUE_DEFINITIONS[issueId];
@@ -155,14 +166,14 @@ function makeRound(difficulty, team) {
     phase: "fault_alert",
   });
 
-  const challenges =
-    difficulty === "advanced"
-      ? [environment(), fault(), environment()]
-      : [
-          canEnvironment && (!canFault || Math.random() < 0.75)
-            ? environment()
-            : fault(),
-        ];
+  const challenges = Array.from({ length: count }, (_, index) => {
+    if (difficulty === "advanced") {
+      return index % 2 === 0 ? environment() : fault();
+    }
+    return canEnvironment && (!canFault || Math.random() < 0.75)
+      ? environment()
+      : fault();
+  });
 
   return {
     id: crypto.randomUUID(),
@@ -196,11 +207,9 @@ function advanceRound(team) {
   }
   round.status = "complete";
   if (round.challenges.every((challenge) => challenge.success)) {
-    team.score += round.difficulty === "advanced" ? 400 : 100;
-    round.message =
-      round.difficulty === "advanced"
-        ? "심화 미션 성공! 400점을 획득했습니다."
-        : "기본 미션 성공! 100점을 획득했습니다.";
+    const points = round.challenges.length * (round.difficulty === "advanced" ? 150 : 100);
+    team.score += points;
+    round.message = `${round.difficulty === "advanced" ? "심화" : "기본"} 미션 성공! ${points}점을 획득했습니다.`;
   } else {
     team.crops = Math.max(0, team.crops - 1);
     round.message = "미션 실패. 작물 1개를 잃었습니다.";
@@ -208,8 +217,11 @@ function advanceRound(team) {
 }
 
 function publicTeam(team) {
+  const presentation = TEAM_PRESENTATIONS[team.id] ?? {};
   return {
     ...structuredClone(team),
+    color: presentation.color ?? team.color,
+    symbol: presentation.symbol ?? "●",
     players: team.players.map(({ token: _token, ...player }) => ({ ...player })),
   };
 }
@@ -338,7 +350,8 @@ export class GameRoom {
         return {
           id: team.id,
           name: team.name,
-          color: team.color,
+          color: TEAM_PRESENTATIONS[id]?.color ?? team.color,
+          symbol: TEAM_PRESENTATIONS[id]?.symbol ?? "●",
           joinCode: team.joinCode,
           score: team.score,
           crops: team.crops,
@@ -413,7 +426,7 @@ export class GameRoom {
     } else if (action.type === "start_all") {
       if (!["basic", "advanced"].includes(action.difficulty)) throw new Error("난이도가 올바르지 않습니다.");
       const rounds = Object.fromEntries(
-        TEAM_IDS.map((id) => [id, makeRound(action.difficulty, state.teams[id])]),
+        TEAM_IDS.map((id) => [id, makeRound(action.difficulty, state.teams[id], action.count)]),
       );
       for (const id of TEAM_IDS) state.teams[id].round = rounds[id];
     } else if (action.type === "reset_all") {
@@ -432,7 +445,7 @@ export class GameRoom {
         player.roles = [...new Set((action.roles ?? []).filter((role) => VALID_ROLES.has(role)))];
       } else if (action.type === "start_round") {
         if (!["basic", "advanced"].includes(action.difficulty)) throw new Error("난이도가 올바르지 않습니다.");
-        team.round = makeRound(action.difficulty, team);
+        team.round = makeRound(action.difficulty, team, action.count);
       } else if (action.type === "advance") {
         advanceRound(team);
       } else if (action.type === "reset_team") {
@@ -608,12 +621,17 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .player-row{border-top:1px solid var(--line);padding:14px 0}.player-row:first-child{border-top:0}.player-head{display:flex;justify-content:space-between;gap:10px;align-items:center}
 .role-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.role-check{display:flex;align-items:center;gap:5px;background:#edf3ef;border-radius:6px;padding:8px 9px;font-size:13px}.role-check input{width:17px;height:17px}
 .signals{grid-template-columns:repeat(5,minmax(0,1fr))}.signal-item label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}.signal-item input{width:100%;min-height:42px;border:1px solid #bdc9c1;border-radius:6px;padding:8px}
+.count-control{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#405047}.count-control input{width:68px;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;text-align:center;background:#fff}
 .pill{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;background:#e9f0eb;color:#33473a;font-size:13px;font-weight:700}.pills{display:flex;gap:7px;flex-wrap:wrap}
 .mission{min-height:340px;display:grid;align-content:center;text-align:center}.mission .icon{font-size:54px;margin-bottom:14px}.mission h2{font-size:28px}.choices{display:grid;gap:10px;margin-top:18px}.choices button{width:100%;min-height:54px}
 .status-row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.crops{font-size:21px;letter-spacing:2px}.phase{color:#496156;font-size:13px;font-weight:700;text-transform:uppercase}
 .round-progress{display:flex;justify-content:center;gap:7px;margin-bottom:18px}.dot{width:11px;height:11px;border-radius:50%;background:#cbd6ce}.dot.on{background:#287a4b}.dot.done{background:#e0a127}
+.team-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--team);color:#fff;padding:16px 18px;border-radius:8px;margin-bottom:14px}.team-banner-symbol{font-size:34px}.team-banner strong{display:block;font-size:22px}.team-banner span{font-size:13px}
+.player-tools{display:flex;justify-content:flex-end;margin-bottom:14px}.role-focus{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-left:7px solid var(--team);padding:16px;margin-bottom:14px}.role-focus-symbol{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;border-radius:50%;background:var(--team);color:#fff;font-size:24px;font-weight:700}.role-focus h2{margin-bottom:4px}.role-focus p{margin-bottom:0}
+.role-guide{margin-bottom:16px}.role-guide h3{margin-bottom:10px}.role-guide-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.role-guide-item{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px}.role-guide-item.active{border:2px solid var(--team);padding:11px}.role-symbol{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#e7eee9;color:#26352b;font-weight:700}.role-guide-item strong{display:block;margin-bottom:3px}.role-guide-item p{font-size:13px;margin-bottom:0;color:var(--muted)}
+.hint-area{margin-top:16px}.hint-box{margin-top:10px;padding:13px;border:2px solid #e0a127;border-radius:7px;background:#fff8df;color:#5b4200;font-weight:700}.signal-dialog{width:min(540px,calc(100% - 28px));border:0;border-radius:8px;padding:0;box-shadow:0 18px 50px rgba(0,0,0,.22)}.signal-dialog::backdrop{background:rgba(20,30,24,.55)}.dialog-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.dialog-head h2{margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;min-height:42px;padding:0;border-radius:50%;background:#e7eee9;color:#26352b;font-size:24px}.signal-rule-list{display:grid;gap:0;padding:8px 18px 18px}.signal-rule{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.signal-rule:last-child{border-bottom:0}.signal-rule strong{text-align:right;color:var(--team)}
 .footer-note{text-align:center;color:#718078;font-size:12px;margin-top:16px}
-@media(max-width:850px){.grid3,.signals{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}}
+@media(max-width:850px){.grid3,.signals,.role-guide-list{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}}
 `;
 
 function layout(title, body, scripts = "") {
@@ -637,7 +655,7 @@ function homePage() {
     `<script>
 fetch("/api/public").then(function(r){return r.json()}).then(function(data){
   document.getElementById("teams").innerHTML=data.teams.map(function(t){
-    return '<a class="card" style="border-top:5px solid '+t.color+';text-decoration:none" href="/play/'+encodeURIComponent(t.joinCode)+'"><strong>'+t.name+'</strong><br><span class="muted">점수 '+t.score+' · 작물 '+t.crops+'개</span></a>';
+    return '<a class="card" style="border-top:5px solid '+t.color+';text-decoration:none" href="/play/'+encodeURIComponent(t.joinCode)+'"><strong>'+t.symbol+' '+t.name+'</strong><br><span class="muted">점수 '+t.score+' · 작물 '+t.crops+'개</span></a>';
   }).join("");
 });
 </script>`,
@@ -660,7 +678,7 @@ function adminPage() {
         <div id="scores" class="scorebar"></div>
         <section class="card" style="margin-bottom:16px">
           <div class="section-head"><div><h2>게임 운영</h2><p class="muted">전체 팀을 동시에 시작하거나 초기화합니다.</p></div>
-          <div class="toolbar"><button onclick="startAll('basic')">전체 기본 미션</button><button class="amber" onclick="startAll('advanced')">전체 심화 미션</button><button class="danger" onclick="resetAll()">전체 초기화</button></div></div>
+          <div class="toolbar"><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="10" value="3" inputmode="numeric"></label><button onclick="startAll('basic')">전체 기본 미션</button><button class="amber" onclick="startAll('advanced')">전체 심화 미션</button><button class="danger" onclick="resetAll()">전체 초기화</button></div></div>
           <div id="signals" class="grid signals"></div>
           <button class="secondary" style="margin-top:12px" onclick="saveSignals()">신호 규칙 저장</button>
         </section>
@@ -715,12 +733,13 @@ function teamHtml(id){
   var t=game.teams[id],round=t.round;
   var roundText=!round?"대기 중":(round.status==="complete"?round.message:(round.difficulty==="advanced"?"심화":"기본")+" 미션 "+(round.challengeIndex+1)+"/"+round.challenges.length);
   var players=t.players.length?t.players.map(function(p){return '<div class="player-row"><div class="player-head"><div><strong>'+esc(p.name)+'</strong> <span class="muted">'+esc(p.grade)+'학년</span></div><button class="danger" onclick="removePlayer(\\''+id+'\\',\\''+p.id+'\\')">삭제</button></div><div class="role-list">'+roles.map(function(r){var checked=p.roles.includes(r.id)?" checked":"";return '<label class="role-check"><input type="checkbox"'+checked+' onchange="setRole(\\''+id+'\\',\\''+p.id+'\\',\\''+r.id+'\\',this.checked)"> '+esc(r.label)+'</label>'}).join("")+'</div></div>'}).join(""):'<p class="muted">아직 참가한 학생이 없습니다.</p>';
-  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>'+t.score+'점</span><span>작물 '+t.crops+'개</span></div></div><div class="toolbar"><button onclick="startTeam(\\''+id+'\\',\\'basic\\')">기본</button><button class="amber" onclick="startTeam(\\''+id+'\\',\\'advanced\\')">심화</button><button class="secondary" onclick="advance(\\''+id+'\\')">다음</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
+  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>'+t.score+'점</span><span>작물 '+t.crops+'개</span></div></div><div class="toolbar"><button onclick="startTeam(\\''+id+'\\',\\'basic\\')">기본</button><button class="amber" onclick="startTeam(\\''+id+'\\',\\'advanced\\')">심화</button><button class="secondary" onclick="advance(\\''+id+'\\')">다음</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
 }
 async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;render()}catch(error){alert(error.message)}}
 function setRole(teamId,playerId,role,checked){var p=game.teams[teamId].players.find(function(x){return x.id===playerId});var next=p.roles.filter(function(x){return x!==role});if(checked)next.push(role);act({type:"assign_roles",teamId:teamId,playerId:playerId,roles:next})}
-function startTeam(teamId,difficulty){act({type:"start_round",teamId:teamId,difficulty:difficulty})}
-function startAll(difficulty){act({type:"start_all",difficulty:difficulty})}
+function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
+function startTeam(teamId,difficulty){act({type:"start_round",teamId:teamId,difficulty:difficulty,count:selectedCount()})}
+function startAll(difficulty){act({type:"start_all",difficulty:difficulty,count:selectedCount()})}
 function advance(teamId){act({type:"advance",teamId:teamId})}
 function resetTeam(teamId){if(confirm("이 팀의 점수와 작물을 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
 function resetAll(){if(confirm("모든 팀의 점수와 작물을 초기화할까요?"))act({type:"reset_all"})}
@@ -735,8 +754,8 @@ function playerPage(code) {
   const encodedCode = JSON.stringify(code);
   return layout(
     "플레이어 | 스마트 농장",
-    `<main class="shell">
-      <header class="topbar"><div class="brand"><div class="logo">♧</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" class="muted">팀 참가</div></div></div><div id="miniScore"></div></header>
+    `<main id="playerShell" class="shell">
+      <header class="topbar"><div class="brand"><div id="teamMark" class="logo">♧</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" class="muted">팀 참가</div></div></div><div id="miniScore"></div></header>
       <section id="join" class="card auth">
         <h1>팀 참가</h1><p class="muted">이름과 학년을 입력하면 바로 참가합니다.</p>
         <form id="joinForm"><div class="field"><label for="name">이름</label><input id="name" maxlength="20" required></div>
@@ -744,11 +763,16 @@ function playerPage(code) {
         <button type="submit" style="width:100%">게임 참가</button></form><div id="joinMessage" class="notice error" hidden></div>
       </section>
       <section id="game" hidden>
+        <div id="teamBanner" class="team-banner"></div>
+        <div class="player-tools"><button class="secondary" onclick="openSignals()">신호 규칙 확인</button></div>
+        <section id="currentRole" class="role-focus"></section>
+        <section class="role-guide"><h3>내가 맡은 역할과 하는 일</h3><div id="roleGuide" class="role-guide-list"></div></section>
         <div class="status-row"><div><div class="phase" id="phase">WAITING</div><div id="roles" class="pills"></div></div><div id="crops" class="crops"></div></div>
         <div id="progress" class="round-progress"></div>
         <section id="mission" class="card mission"></section>
         <p class="footer-note">화면은 2초마다 자동으로 업데이트됩니다.</p>
       </section>
+      <dialog id="signalDialog" class="signal-dialog"><div class="dialog-head"><h2>우리 팀 신호 규칙</h2><button type="button" class="icon-button" aria-label="닫기" onclick="closeSignals()">×</button></div><div id="signalRules" class="signal-rule-list"></div></dialog>
     </main>`,
     `<script>
 var TEAM_CODE=${encodedCode};
@@ -776,16 +800,44 @@ async function act(action){
   try{var response=await fetch("/api/player/action",{method:"POST",headers:headers(),body:JSON.stringify(action)});var data=await responseData(response);if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
   catch(error){alert(error.message)}
 }
-function roleLabel(id,data){var role=data.roles.find(function(item){return item.id===id});return role?role.label:id}
+function roleInfo(id,data){return data.roles.find(function(item){return item.id===id})||{id:id,label:id,symbol:"●",description:"맡은 역할의 순서를 기다립니다."}}
+function roleLabel(id,data){return roleInfo(id,data).label}
+function activeRoleId(data,c){
+  if(!c||c.phase==="result")return null;
+  if(c.kind==="environment"&&c.phase==="sensor"&&c.issueId)return data.issues[c.issueId].sensorRole;
+  if(c.kind==="environment"&&c.phase==="computer")return "computer";
+  if(c.kind==="environment"&&c.phase==="device")return c.selectedDevice||null;
+  if(c.kind==="fault"&&c.phase==="fault_alert")return c.targetDevice||null;
+  if(c.kind==="fault"&&c.phase==="repair")return "engineer";
+  return null;
+}
+function openSignals(){var dialog=document.getElementById("signalDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
+function closeSignals(){var dialog=document.getElementById("signalDialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open")}
+function toggleHint(){var box=document.getElementById("hintBox");if(box)box.hidden=!box.hidden}
+function hint(text){return '<div class="hint-area"><button class="secondary" onclick="toggleHint()">힌트 보기</button><div id="hintBox" class="hint-box" hidden>'+esc(text)+'</div></div>'}
 function showGame(data){
   var team=data.team,player=data.player,round=team.round,challenge=round&&round.challenges[round.challengeIndex];
+  var activeId=activeRoleId(data,challenge),isMyTurn=activeId&&player.roles.includes(activeId);
   document.getElementById("join").hidden=true;document.getElementById("game").hidden=false;
+  document.getElementById("playerShell").style.setProperty("--team",team.color);
+  document.getElementById("teamMark").style.background=team.color;
+  document.getElementById("teamMark").textContent=team.symbol;
   document.getElementById("teamLabel").textContent=team.name+" · "+player.name;
   document.getElementById("miniScore").innerHTML="<strong>"+team.score+"점</strong>";
+  document.getElementById("teamBanner").innerHTML='<div><strong>'+esc(team.symbol)+' '+esc(team.name)+'</strong><span>'+esc(player.name)+' 구조대원</span></div><div class="team-banner-symbol">'+esc(team.symbol)+'</div>';
   document.getElementById("crops").textContent="🌱".repeat(team.crops)+"·".repeat(Math.max(0,5-team.crops));
   document.getElementById("roles").innerHTML=player.roles.length?player.roles.map(function(id){return '<span class="pill">'+esc(roleLabel(id,data))+'</span>'}).join(""):'<span class="pill">역할 배정 대기</span>';
+  if(isMyTurn){
+    var active=roleInfo(activeId,data);
+    document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">'+esc(active.symbol)+'</div><div><p class="phase">지금은 내가 움직일 차례</p><h2>'+esc(active.label)+'</h2><p>'+esc(active.description)+'</p></div>';
+  }else{
+    var waitingTitle=!player.roles.length?"역할 배정을 기다려요":!round?"미션 시작을 기다려요":round.status==="complete"?"미션을 마쳤어요":"팀원의 선택을 기다려요";
+    document.getElementById("currentRole").innerHTML='<div class="role-focus-symbol">…</div><div><p class="phase">현재 수행 역할</p><h2>'+waitingTitle+'</h2><p>'+(player.roles.length?"내 역할 차례가 오면 이곳에 크게 표시됩니다.":"선생님이 역할을 배정하면 역할 이름과 하는 일이 표시됩니다.")+'</p></div>';
+  }
+  document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
+  document.getElementById("signalRules").innerHTML=Object.keys(data.issues).map(function(id){return '<div class="signal-rule"><span>'+esc(data.issues[id].label)+'</span><strong>'+esc(data.signals[id])+'</strong></div>'}).join("");
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
-  document.getElementById("phase").textContent=round?(round.difficulty==="advanced"?"심화 미션":"기본 미션"):"WAITING";
+  document.getElementById("phase").textContent=round?(round.difficulty==="advanced"?"심화 미션 ":"기본 미션 ")+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
   document.getElementById("mission").innerHTML=missionHtml(data,challenge);
 }
 function wait(icon,title,text){return '<div><div class="icon">'+icon+'</div><h2>'+esc(title)+'</h2><p class="muted">'+esc(text)+'</p></div>'}
@@ -797,23 +849,23 @@ function missionHtml(data,c){
   if(!c)return wait("⌛","문제를 불러오는 중","잠시 기다려 주세요.");
   if(c.phase==="result")return wait(c.success?"✅":"❌",c.success?"문제 해결 성공!":"문제 해결 실패",round.message||"결과를 확인하고 다음 문제를 준비하세요.");
   if(c.kind==="environment"&&c.phase==="sensor"){
-    if(c.issueId){var issue=data.issues[c.issueId];return '<div><div class="icon">📡</div><h2>'+esc(issue.label)+' 감지</h2><p>'+esc(issue.message)+'</p><div class="choices">'+Object.keys(data.signals).map(function(id){return '<button onclick="act({type:\\'send_signal\\',signal:\\''+esc(data.signals[id])+'\\'})">'+esc(data.signals[id])+'</button>'}).join("")+'</div></div>'}
+    if(c.issueId){var issue=data.issues[c.issueId];return '<div><div class="icon">📡</div><h2>'+esc(issue.label)+' 감지</h2><p>'+esc(issue.message)+'</p><div class="choices">'+Object.keys(data.signals).map(function(id){return '<button onclick="act({type:\\'send_signal\\',signal:\\''+esc(data.signals[id])+'\\'})">'+esc(data.signals[id])+'</button>'}).join("")+'</div>'+hint("지금 문제는 "+issue.label+"이에요. "+data.signals[c.issueId]+" 버튼을 누르세요.")+'</div>'}
     return wait("🙈","센서가 확인 중","문제 상황은 담당 센서에게만 보입니다.");
   }
   if(c.kind==="environment"&&c.phase==="computer"){
-    if(player.roles.includes("computer"))return '<div><div class="icon">🧠</div><h2>신호를 해석하세요</h2><p>전달된 신호: <strong>'+esc(c.selectedSignal)+'</strong></p><div class="choices">'+data.roles.filter(function(r){return r.group==="기기"}).map(function(r){return '<button onclick="act({type:\\'computer_decision\\',deviceRole:\\''+r.id+'\\'})">'+esc(r.label)+' 선택</button>'}).join("")+'</div></div>';
+    if(player.roles.includes("computer")){var signalIssueId=Object.keys(data.signals).find(function(id){return data.signals[id]===c.selectedSignal}),signalIssue=signalIssueId&&data.issues[signalIssueId],computerHint=signalIssue?"이 신호는 "+signalIssue.label+"을 뜻해요. "+roleLabel(signalIssue.deviceRole,data)+"를 선택하세요.":"신호 규칙 창에서 같은 신호를 찾아 알맞은 기기를 선택하세요.";return '<div><div class="icon">🧠</div><h2>신호를 해석하세요</h2><p>전달된 신호: <strong>'+esc(c.selectedSignal)+'</strong></p><div class="choices">'+data.roles.filter(function(r){return r.group==="기기"}).map(function(r){return '<button onclick="act({type:\\'computer_decision\\',deviceRole:\\''+r.id+'\\'})">'+esc(r.label)+' 선택</button>'}).join("")+'</div>'+hint(computerHint)+'</div>'}
     return wait("🔄","컴퓨터가 판단 중","전달된 신호를 바탕으로 작동할 기기를 고르고 있습니다.");
   }
   if(c.kind==="environment"&&c.phase==="device"){
-    if(player.roles.includes(c.selectedDevice))return '<div><div class="icon">⚙️</div><h2>'+esc(roleLabel(c.selectedDevice,data))+' 작동</h2><p>컴퓨터의 명령을 실행하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">기기 작동하기</button></div></div>';
+    if(player.roles.includes(c.selectedDevice))return '<div><div class="icon">⚙️</div><h2>'+esc(roleLabel(c.selectedDevice,data))+' 작동</h2><p>컴퓨터의 명령을 실행하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">기기 작동하기</button></div>'+hint(roleLabel(c.selectedDevice,data)+" 담당 차례예요. 기기 작동하기 버튼을 누르세요.")+'</div>';
     return wait("⚙️","기기가 작동 중",roleLabel(c.selectedDevice,data)+" 담당자가 명령을 실행하고 있습니다.");
   }
   if(c.kind==="fault"&&c.phase==="fault_alert"){
-    if(c.faultId&&player.roles.includes(c.targetDevice)){var fault=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">⚠️</div><h2>'+esc(fault.label)+'</h2><p>'+esc(fault.detail)+'</p><p><strong>'+esc(roleLabel(c.targetDevice,data))+'</strong> 담당자가 엔지니어에게 알려야 합니다.</p><div class="choices"><button class="danger" onclick="act({type:\\'report_fault\\'})">고장 신호 보내기</button></div></div>'}
+    if(c.faultId&&player.roles.includes(c.targetDevice)){var fault=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">⚠️</div><h2>'+esc(fault.label)+'</h2><p>'+esc(fault.detail)+'</p><p><strong>'+esc(roleLabel(c.targetDevice,data))+'</strong> 담당자가 엔지니어에게 알려야 합니다.</p><div class="choices"><button class="danger" onclick="act({type:\\'report_fault\\'})">고장 신호 보내기</button></div>'+hint("기기가 고장 났어요. 고장 신호 보내기 버튼을 눌러 엔지니어에게 알려 주세요.")+'</div>'}
     return wait("⚙️","기기 점검 중","고장이 난 기기가 엔지니어에게 신호를 보내야 합니다.");
   }
   if(c.kind==="fault"&&c.phase==="repair"){
-    if(player.roles.includes("engineer")){var fault2=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">🛠️</div><h2>'+esc(fault2.label)+' 수리</h2><p>'+esc(fault2.detail)+'</p><div class="choices">'+data.faults.map(function(f){return '<button onclick="act({type:\\'repair\\',repairChoice:\\''+esc(f.repair)+'\\'})">'+esc(f.repair)+'</button>'}).join("")+'</div></div>'}
+    if(player.roles.includes("engineer")){var fault2=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">🛠️</div><h2>'+esc(fault2.label)+' 수리</h2><p>'+esc(fault2.detail)+'</p><div class="choices">'+data.faults.map(function(f){return '<button onclick="act({type:\\'repair\\',repairChoice:\\''+esc(f.repair)+'\\'})">'+esc(f.repair)+'</button>'}).join("")+'</div>'+hint(fault2.repair+" 버튼을 누르면 고칠 수 있어요.")+'</div>'}
     return wait("🛠️","엔지니어 수리 중","고장 신호를 받고 올바른 수리 방법을 찾고 있습니다.");
   }
   return wait("⌛","다른 역할의 차례","팀원의 선택을 기다려 주세요.");
