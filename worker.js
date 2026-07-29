@@ -104,6 +104,7 @@ function createInitialState() {
 
   return {
     auth: { salt: null, passwordHash: null, adminToken: null },
+    activeCycleId: null,
     signals: { ...DEFAULT_SIGNALS },
     teams: {
       A: team("A", "새싹팀", "#287a4b"),
@@ -456,11 +457,13 @@ export class GameRoom {
       }
     } else if (action.type === "start_all") {
       const cycleId = crypto.randomUUID();
+      state.activeCycleId = cycleId;
       const rounds = Object.fromEntries(
         TEAM_IDS.map((id) => [id, makeRound(state.teams[id], action.count, cycleId)]),
       );
       for (const id of TEAM_IDS) state.teams[id].round = rounds[id];
     } else if (action.type === "reset_all") {
+      state.activeCycleId = null;
       for (const id of TEAM_IDS) {
         state.teams[id].score = 0;
         state.teams[id].round = null;
@@ -474,9 +477,10 @@ export class GameRoom {
         if (!player) throw new Error("참가자를 찾을 수 없습니다.");
         player.roles = [...new Set((action.roles ?? []).filter((role) => VALID_ROLES.has(role)))];
       } else if (action.type === "start_round") {
-        team.round = makeRound(team, action.count);
-      } else if (action.type === "advance") {
-        advanceRound(team);
+        if (!state.activeCycleId || competitionResult(state).complete) {
+          state.activeCycleId = crypto.randomUUID();
+        }
+        team.round = makeRound(team, action.count, state.activeCycleId);
       } else if (action.type === "reset_team") {
         team.score = 0;
         team.round = null;
@@ -766,14 +770,14 @@ function teamHtml(id){
   var t=game.teams[id],round=t.round;
   var roundText=!round?"대기 중":(round.status==="complete"?round.message:"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length);
   var players=t.players.length?t.players.map(function(p){return '<div class="player-row"><div class="player-head"><div><strong>'+esc(p.name)+'</strong> <span class="muted">'+esc(p.grade)+'학년</span></div><button class="danger" onclick="removePlayer(\\''+id+'\\',\\''+p.id+'\\')">삭제</button></div><div class="role-list">'+roles.map(function(r){var checked=p.roles.includes(r.id)?" checked":"";return '<label class="role-check"><input type="checkbox"'+checked+' onchange="setRole(\\''+id+'\\',\\''+p.id+'\\',\\''+r.id+'\\',this.checked)"> '+esc(r.label)+'</label>'}).join("")+'</div></div>'}).join(""):'<p class="muted">아직 참가한 학생이 없습니다.</p>';
-  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>총점 '+t.score+'점</span></div></div><div class="toolbar"><button class="secondary" onclick="advance(\\''+id+'\\')">다음</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">팀 점수 초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
+  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>총점 '+t.score+'점</span></div></div><div class="toolbar"><button onclick="startTeam(\\''+id+'\\')">이 팀 미션 시작</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">팀 점수 초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div><h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
 }
 function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀이 모두 미션을 마쳐 총점을 비교했습니다.</p><div class="ranking">'+data.leaderboard.map(function(t){return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
 async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;render()}catch(error){alert(error.message)}}
 function setRole(teamId,playerId,role,checked){var p=game.teams[teamId].players.find(function(x){return x.id===playerId});var next=p.roles.filter(function(x){return x!==role});if(checked)next.push(role);act({type:"assign_roles",teamId:teamId,playerId:playerId,roles:next})}
 function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
+function startTeam(teamId){act({type:"start_round",teamId:teamId,count:selectedCount()})}
 function startAll(){act({type:"start_all",count:selectedCount()})}
-function advance(teamId){act({type:"advance",teamId:teamId})}
 function resetTeam(teamId){if(confirm("이 팀의 점수를 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
 function resetAll(){if(confirm("모든 팀의 점수를 초기화할까요?"))act({type:"reset_all"})}
 function removePlayer(teamId,playerId){if(confirm("이 참가자를 삭제할까요?"))act({type:"remove_player",teamId:teamId,playerId:playerId})}
