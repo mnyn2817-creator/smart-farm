@@ -12,7 +12,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-07-29-3";
+const APP_VERSION = "2026-07-29-4";
 
 const ISSUE_DEFINITIONS = {
   heat: {
@@ -542,6 +542,16 @@ export class GameRoom {
       }
       if (new Set(Object.values(nextSignals)).size !== Object.keys(nextSignals).length) {
         throw new Error("각 문제의 신호 규칙은 서로 다르게 정해 주세요.");
+      }
+      for (const team of Object.values(state.teams)) {
+        const challenge = currentChallenge(team);
+        if (
+          challenge?.kind === "environment" &&
+          challenge.phase !== "result" &&
+          challenge.selectedSignal === state.signals[challenge.issueId]
+        ) {
+          challenge.selectedSignal = nextSignals[challenge.issueId];
+        }
       }
       state.signals = nextSignals;
     } else if (action.type === "start_all") {
