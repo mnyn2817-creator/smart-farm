@@ -12,7 +12,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-07-29-2";
+const APP_VERSION = "2026-07-29-3";
 
 const ISSUE_DEFINITIONS = {
   heat: {
@@ -407,7 +407,12 @@ export class GameRoom {
         return new Response(homePage(), { headers: { "content-type": "text/html; charset=utf-8" } });
       }
       if (request.method === "GET" && url.pathname === "/admin") {
-        return new Response(adminPage(), { headers: { "content-type": "text/html; charset=utf-8" } });
+        return new Response(adminPage(), {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "cache-control": "no-store",
+          },
+        });
       }
       if (request.method === "GET" && url.pathname.startsWith("/play/")) {
         const code = decodeURIComponent(url.pathname.slice(6));
@@ -506,6 +511,7 @@ export class GameRoom {
       roles: ROLE_DEFINITIONS,
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
+      appVersion: APP_VERSION,
       competition: competitionResult(state),
     };
   }
@@ -526,10 +532,18 @@ export class GameRoom {
     const action = await request.json();
 
     if (action.type === "save_signals") {
+      const nextSignals = {};
       for (const issueId of Object.keys(ISSUE_DEFINITIONS)) {
         const value = String(action.signals?.[issueId] ?? "").trim();
-        if (value) state.signals[issueId] = value.slice(0, 30);
+        if (!value) {
+          throw new Error(`${ISSUE_DEFINITIONS[issueId].label} 신호 규칙을 입력해 주세요.`);
+        }
+        nextSignals[issueId] = value.slice(0, 30);
       }
+      if (new Set(Object.values(nextSignals)).size !== Object.keys(nextSignals).length) {
+        throw new Error("각 문제의 신호 규칙은 서로 다르게 정해 주세요.");
+      }
+      state.signals = nextSignals;
     } else if (action.type === "start_all") {
       const cycleId = crypto.randomUUID();
       state.activeCycleId = cycleId;
@@ -808,6 +822,7 @@ fetch("/api/public").then(function(r){return r.json()}).then(function(data){
 }
 
 function adminPage() {
+  const encodedVersion = JSON.stringify(APP_VERSION);
   return layout(
     "관리자 | 스마트 농장",
     `<main class="shell">
@@ -826,7 +841,7 @@ function adminPage() {
           <div class="section-head"><div><h2>게임 운영</h2><p class="muted">전체 팀을 동시에 시작하거나 초기화합니다.</p></div>
           <div class="toolbar"><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="10" value="3" inputmode="numeric"></label><button onclick="startAll()">전체 미션 시작</button><button class="danger" onclick="resetAll()">전체 점수 초기화</button></div></div>
           <div id="signals" class="grid signals"></div>
-          <button class="secondary" style="margin-top:12px" onclick="saveSignals()">신호 규칙 저장</button>
+          <button id="signalSaveButton" class="secondary" style="margin-top:12px" onclick="saveSignals()">신호 규칙 저장</button>
         </section>
         <div id="teams" class="grid"></div>
       </section>
@@ -834,6 +849,7 @@ function adminPage() {
     `<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 <script>
 var token=localStorage.getItem("farm-admin-token")||"";
+var ADMIN_PAGE_VERSION=${encodedVersion};
 var setupRequired=false;
 var game=null;
 var roles=[];
@@ -842,6 +858,9 @@ var competition={complete:false};
 var roleDrafts={};
 var roleTimers={};
 var roleSaving={};
+var signalDrafts={};
+var signalDirty=false;
+var signalSaving=false;
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
 async function responseData(response){
   var text=await response.text();
@@ -869,14 +888,14 @@ document.getElementById("authForm").addEventListener("submit",async function(eve
 });
 async function load(){
   try{
-    var data=await api("/api/admin/state");game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;
+    var data=await api("/api/admin/state");if(data.appVersion&&data.appVersion!==ADMIN_PAGE_VERSION){location.reload();return}game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;
     document.getElementById("auth").hidden=true;document.getElementById("dashboard").hidden=false;render();
   }catch(error){localStorage.removeItem("farm-admin-token");token="";document.getElementById("auth").hidden=false;document.getElementById("dashboard").hidden=true}
 }
 function render(){
   document.getElementById("scores").innerHTML=["A","B","C"].map(function(id){var t=game.teams[id];return '<div class="score" style="--team:'+t.color+'"><span>'+esc(t.symbol)+' '+esc(t.name)+'</span><strong>'+t.score+'점</strong><span class="muted">참가 '+t.players.length+'명</span></div>'}).join("");
   var result=document.getElementById("competitionResult");result.hidden=!competition.complete;result.innerHTML=competition.complete?competitionHtml(competition):"";
-  document.getElementById("signals").innerHTML=Object.keys(issues).map(function(id){return '<div class="signal-item"><label>'+esc(issues[id].label)+'</label><input data-signal="'+id+'" value="'+esc(game.signals[id])+'"></div>'}).join("");
+  document.getElementById("signals").innerHTML=Object.keys(issues).map(function(id){var value=Object.prototype.hasOwnProperty.call(signalDrafts,id)?signalDrafts[id]:game.signals[id];return '<div class="signal-item"><label>'+esc(issues[id].label)+'</label><input data-signal="'+id+'" value="'+esc(value)+'" oninput="editSignal(\\''+id+'\\',this.value)"></div>'}).join("");
   document.getElementById("teams").innerHTML=["A","B","C"].map(teamHtml).join("");
   ["A","B","C"].forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
 }
@@ -926,8 +945,23 @@ async function startAll(){await flushRoleSaves();act({type:"start_all",count:sel
 function resetTeam(teamId){if(confirm("이 팀의 점수를 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
 function resetAll(){if(confirm("모든 팀의 점수를 초기화할까요?"))act({type:"reset_all"})}
 function removePlayer(teamId,playerId){if(confirm("이 참가자를 삭제할까요?"))act({type:"remove_player",teamId:teamId,playerId:playerId})}
-function saveSignals(){var signals={};document.querySelectorAll("[data-signal]").forEach(function(input){signals[input.dataset.signal]=input.value});act({type:"save_signals",signals:signals})}
-setInterval(function(){if(token&&!document.hidden&&!hasPendingRoleSaves())load()},2000);boot();
+function editSignal(id,value){signalDrafts[id]=value;signalDirty=true;var button=document.getElementById("signalSaveButton");if(button)button.textContent="신호 규칙 저장"}
+async function saveSignals(){
+  if(signalSaving)return;
+  var signals={},button=document.getElementById("signalSaveButton");
+  Object.keys(issues).forEach(function(id){signals[id]=Object.prototype.hasOwnProperty.call(signalDrafts,id)?signalDrafts[id]:game.signals[id]});
+  signalSaving=true;button.disabled=true;button.textContent="저장 중";
+  try{
+    var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify({type:"save_signals",signals:signals})});
+    Object.keys(signals).forEach(function(id){if(signalDrafts[id]===signals[id])delete signalDrafts[id]});
+    signalDirty=Object.keys(signalDrafts).length>0;
+    game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;render();
+    button.textContent=signalDirty?"신호 규칙 저장":"저장 완료";
+    if(!signalDirty)setTimeout(function(){if(!signalDirty)button.textContent="신호 규칙 저장"},900);
+  }catch(error){alert(error.message);button.textContent="신호 규칙 저장"}
+  finally{signalSaving=false;button.disabled=false}
+}
+setInterval(function(){if(token&&!document.hidden&&!hasPendingRoleSaves()&&!signalDirty&&!signalSaving)load()},2000);boot();
 </script>`,
   );
 }
