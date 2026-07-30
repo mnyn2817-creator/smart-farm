@@ -971,7 +971,7 @@ async function saveSignals(){
   }catch(error){alert(error.message);button.textContent="신호 규칙 저장"}
   finally{signalSaving=false;button.disabled=false}
 }
-setInterval(function(){if(token&&!document.hidden&&!hasPendingRoleSaves()&&!signalDirty&&!signalSaving)load()},2000);boot();
+boot();
 </script>`,
   );
 }
