@@ -169,11 +169,20 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
 
   await admin({ type: "start_all", count: 3 });
 
-  const solveCurrentChallenge = async (teamId, useHint = false) => {
+  const solveCurrentChallenge = async (
+    teamId,
+    useHint = false,
+    elapsedMs = 0,
+  ) => {
     let current = await room.state();
     const currentTeam = current.teams[teamId];
     const currentChallenge =
       currentTeam.round.challenges[currentTeam.round.challengeIndex];
+    if (elapsedMs) {
+      currentChallenge.startedAt = new Date(Date.now() - elapsedMs).toISOString();
+      await room.save(current);
+      current = await room.state();
+    }
 
     if (currentChallenge.kind === "environment") {
       const issue = {
@@ -222,7 +231,15 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
 
   for (const id of ["A", "B", "C"]) {
     for (let index = 0; index < 3; index += 1) {
-      await solveCurrentChallenge(id, id === "A" && index === 0);
+      const elapsedMs =
+        id === "B" && index === 0
+          ? 11_000
+          : id === "C" && index === 0
+            ? 21_000
+            : id === "C" && index === 1
+              ? 31_000
+              : 0;
+      await solveCurrentChallenge(id, id === "A" && index === 0, elapsedMs);
     }
   }
 
@@ -235,7 +252,20 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   );
   assert.equal(adminData.competition.complete, true);
   assert.equal(adminData.competition.leaderboard.length, 3);
-  assert.ok(adminData.state.teams.A.score >= 390);
+  assert.equal(adminData.state.teams.A.score, 600);
+  assert.equal(adminData.state.teams.B.score, 590);
+  assert.equal(adminData.state.teams.C.score, 550);
+  assert.deepEqual(
+    adminData.state.teams.A.round.challenges.map((challenge) => challenge.points),
+    [200, 200, 200],
+  );
+  assert.equal(adminData.state.teams.B.round.challenges[0].points, 190);
+  assert.deepEqual(
+    adminData.state.teams.C.round.challenges
+      .slice(0, 2)
+      .map((challenge) => challenge.points),
+    [180, 170],
+  );
   assert.equal(adminData.state.teams.A.round.summary.solved, 3);
   assert.ok(adminData.state.teams.A.stats.hintsUsed >= 1);
 

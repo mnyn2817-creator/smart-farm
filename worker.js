@@ -12,8 +12,11 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-07-30-1";
-const TIME_BONUS_LIMIT_MS = 60_000;
+const APP_VERSION = "2026-07-30-2";
+const SCORE_TIMER_LIMIT_MS = 30_000;
+const CHALLENGE_START_SCORE = 200;
+const CHALLENGE_SCORE_STEP_MS = 10_000;
+const CHALLENGE_MIN_SCORE = 170;
 
 const ISSUE_DEFINITIONS = {
   heat: {
@@ -368,20 +371,20 @@ function challengeScore(round, challenge, success) {
       breakdown: { base: 0, time: 0, noHint: 0, fault: 0, streak: 0 },
     };
   }
-  const previous = round.challenges[round.challengeIndex - 1];
-  const timeBonus = Math.max(
-    0,
-    30 - Math.floor(elapsedMs / (TIME_BONUS_LIMIT_MS / 3)) * 10,
+  const points = Math.max(
+    CHALLENGE_MIN_SCORE,
+    CHALLENGE_START_SCORE -
+      Math.floor(elapsedMs / CHALLENGE_SCORE_STEP_MS) * 10,
   );
   const breakdown = {
-    base: 100,
-    time: timeBonus,
-    noHint: challenge.hintUsed ? 0 : 20,
-    fault: challenge.kind === "fault" ? 30 : 0,
-    streak: previous?.success ? 20 : 0,
+    base: points,
+    time: 0,
+    noHint: 0,
+    fault: 0,
+    streak: 0,
   };
   return {
-    points: Object.values(breakdown).reduce((sum, value) => sum + value, 0),
+    points,
     elapsedMs,
     breakdown,
   };
@@ -887,7 +890,7 @@ export class GameRoom {
         } else {
           normalizeDevicePhase(challenge);
           challenge.startedAt = new Date().toISOString();
-          team.round.message = "현재 단계를 유지하고 보너스 시간을 다시 시작합니다.";
+          team.round.message = "현재 단계를 유지하고 점수 타이머를 다시 시작합니다.";
         }
       } else if (action.type === "handoff_role") {
         const challenge = currentChallenge(team);
@@ -972,7 +975,12 @@ export class GameRoom {
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
       deviceScenes: DEVICE_SCENES,
-      timeBonusLimitMs: TIME_BONUS_LIMIT_MS,
+      scoreTimerLimitMs: SCORE_TIMER_LIMIT_MS,
+      scoring: {
+        startScore: CHALLENGE_START_SCORE,
+        stepMs: CHALLENGE_SCORE_STEP_MS,
+        minScore: CHALLENGE_MIN_SCORE,
+      },
       appVersion: APP_VERSION,
       teamScores: TEAM_IDS.map((id) => {
         const scoreTeam = state.teams[id];
@@ -1121,7 +1129,7 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .team-banner{display:flex;align-items:center;justify-content:space-between;gap:14px;background:var(--team);color:#fff;padding:16px 18px;border-radius:8px;margin-bottom:14px}.team-banner-symbol{font-size:34px}.team-banner strong{display:block;font-size:22px}.team-banner span{font-size:13px}
 .player-tools{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-bottom:14px}.turn-alert{width:100%;background:var(--team);color:#fff;padding:18px;text-align:center;border-radius:8px;margin-bottom:14px}.turn-alert strong{display:block;font-size:26px}.turn-alert span{display:block;margin-top:4px}.role-focus{display:flex;align-items:center;gap:14px;background:#fff;border:1px solid var(--line);border-left:7px solid var(--team);padding:16px;margin-bottom:14px}.role-focus.my-turn{border:3px solid var(--team);padding:14px;background:#fff}.role-focus-symbol{display:grid;place-items:center;width:54px;height:54px;flex:0 0 54px;border-radius:50%;background:var(--team);color:#fff;font-size:24px;font-weight:700}.role-focus h2{margin-bottom:4px}.role-focus p{margin-bottom:0}.next-turn{display:inline-block;margin-top:7px;font-size:13px;font-weight:700;color:var(--team)}
 .role-guide{margin-bottom:16px}.role-guide h3{margin-bottom:10px}.role-guide-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.role-guide-item{display:flex;gap:10px;align-items:flex-start;background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px}.role-guide-item.active{border:2px solid var(--team);padding:11px}.role-symbol{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#e7eee9;color:#26352b;font-weight:700}.role-guide-item strong{display:block;margin-bottom:3px}.role-guide-item p{font-size:13px;margin-bottom:0;color:var(--muted)}
-.flow-track{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-bottom:14px}.flow-step{padding:10px 8px;background:#e7eee9;border-radius:6px;text-align:center;font-size:13px;font-weight:700;color:#647168}.flow-step.current{background:var(--team);color:#fff}.flow-step.done{background:#dfe8e2;color:#31513c}.mission-timer{background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px 14px;margin-bottom:14px}.timer-head{display:flex;justify-content:space-between;gap:10px;font-weight:700}.timer-track{height:8px;background:#e3e9e5;border-radius:8px;overflow:hidden;margin-top:9px}.timer-fill{height:100%;width:100%;background:var(--team);transition:width .3s linear}.timer-expired .timer-fill{background:#b46c00}.timer-note{font-size:12px;color:var(--muted);margin-top:6px}.result-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.result-metric{background:#f3f7f4;padding:10px;border-radius:6px}.result-metric strong{display:block;font-size:18px}.bonus-list{display:flex;justify-content:center;gap:7px;flex-wrap:wrap;margin-top:12px}.bonus-item{background:#edf3ef;border-radius:999px;padding:6px 9px;font-size:12px;font-weight:700}
+.flow-track{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-bottom:14px}.flow-step{padding:10px 8px;background:#e7eee9;border-radius:6px;text-align:center;font-size:13px;font-weight:700;color:#647168}.flow-step.current{background:var(--team);color:#fff}.flow-step.done{background:#dfe8e2;color:#31513c}.mission-timer{background:#fff;border:1px solid var(--line);border-radius:7px;padding:12px 14px;margin-bottom:14px}.timer-head{display:flex;justify-content:space-between;gap:10px;font-weight:700}.timer-track{height:8px;background:#e3e9e5;border-radius:8px;overflow:hidden;margin-top:9px}.timer-fill{height:100%;width:100%;background:var(--team);transition:width .3s linear}.timer-expired .timer-fill{background:#b46c00}.timer-note{font-size:12px;color:var(--muted);margin-top:6px}.result-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:14px}.result-metric{background:#f3f7f4;padding:10px;border-radius:6px}.result-metric strong{display:block;font-size:18px}
 .hint-area{margin-top:16px}.hint-box{margin-top:10px;padding:13px;border:2px solid #e0a127;border-radius:7px;background:#fff8df;color:#5b4200;font-weight:700}.signal-dialog{width:min(540px,calc(100% - 28px));border:0;border-radius:8px;padding:0;box-shadow:0 18px 50px rgba(0,0,0,.22)}.signal-dialog::backdrop{background:rgba(20,30,24,.55)}.dialog-head{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}.dialog-head h2{margin:0}.icon-button{display:grid;place-items:center;width:42px;height:42px;min-height:42px;padding:0;border-radius:50%;background:#e7eee9;color:#26352b;font-size:24px}.signal-rule-list{display:grid;gap:0;padding:8px 18px 18px}.signal-rule{display:flex;justify-content:space-between;gap:16px;padding:13px 0;border-bottom:1px solid var(--line)}.signal-rule:last-child{border-bottom:0}.signal-rule strong{text-align:right;color:var(--team)}
 .team-score-list{display:grid;gap:9px;padding:14px 18px 18px}.team-score-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;border-left:6px solid var(--score-color);background:#f5f8f6;padding:14px;border-radius:6px}.team-score-row strong{font-size:18px}.team-score-points{font-size:24px;font-weight:700;color:#24352a}
 .competition-result{background:#fff;border:2px solid #e0a127;border-radius:8px;padding:18px;margin-bottom:16px}.competition-result h2{margin-bottom:4px}.ranking{display:grid;gap:8px;margin-top:14px}.rank-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;border-left:5px solid var(--rank-color);background:#f7f9f7;padding:11px 12px;border-radius:6px}.rank-number{font-size:20px;font-weight:700}.rank-team small{display:block;color:var(--muted);margin-top:3px}.rank-score{text-align:right}.rank-score strong{display:block}.rank-score span{font-size:12px;color:var(--muted)}
@@ -1438,11 +1446,11 @@ function renderMissionTimer(data,c,isMyTurn){
   if(!round||!c||c.phase==="result"||round.status==="complete"){box.hidden=true;return}
   box.hidden=false;
   function update(){
-    var limit=data.timeBonusLimitMs||60000,elapsed=Math.max(0,Date.now()-new Date(c.startedAt||round.startedAt).getTime()),remaining=Math.max(0,limit-elapsed),percent=Math.max(0,Math.min(100,remaining/limit*100));
+    var limit=data.scoreTimerLimitMs||30000,elapsed=Math.max(0,Date.now()-new Date(c.startedAt||round.startedAt).getTime()),remaining=Math.max(0,limit-elapsed),percent=Math.max(0,Math.min(100,remaining/limit*100));
     if(round.practice){box.className="mission-timer";box.innerHTML='<div class="timer-head"><span>연습 라운드</span><strong>점수 없음</strong></div><div class="timer-note">버튼과 역할 순서를 익혀 보세요.</div>';return}
-    var previous=round.challenges[round.challengeIndex-1],timePoints=Math.max(0,30-Math.floor(elapsed/(limit/3))*10),potential=100+timePoints+(c.hintUsed?0:20)+(c.kind==="fault"?30:0)+(previous&&previous.success?20:0);
+    var scoring=data.scoring||{startScore:200,stepMs:10000,minScore:170},potential=Math.max(scoring.minScore,scoring.startScore-Math.floor(elapsed/scoring.stepMs)*10);
     box.className="mission-timer"+(remaining<=0?" timer-expired":"");
-    box.innerHTML='<div class="timer-head"><span>'+(remaining>0?"보너스 시간 "+Math.ceil(remaining/1000)+"초":"보너스 시간 종료")+'</span><strong>가능 점수 '+potential+'점</strong></div><div class="timer-track"><div class="timer-fill" style="width:'+percent+'%"></div></div><div class="timer-note">'+(remaining>0?"시간 안에 해결하면 시간 보너스를 받습니다.":"기본 점수는 유지되며 힌트가 자동으로 열립니다.")+'</div>';
+    box.innerHTML='<div class="timer-head"><span>'+(remaining>0?"점수 타이머 "+Math.ceil(remaining/1000)+"초":"점수 타이머 종료")+'</span><strong>현재 '+potential+'점</strong></div><div class="timer-track"><div class="timer-fill" style="width:'+percent+'%"></div></div><div class="timer-note">'+(remaining>0?"200점에서 시작해 10초마다 10점씩 줄어듭니다.":"170점이 유지되며 힌트가 자동으로 열립니다.")+'</div>';
     if(remaining<=0&&isMyTurn&&autoHintChallengeId!==c.id){autoHintChallengeId=c.id;hintMarkedChallengeId=c.id;hintVisible=true;localStorage.setItem(KEY+"-hint","1");var hintBox=document.getElementById("hintBox"),hintButton=document.getElementById("hintToggle");if(hintBox)hintBox.hidden=false;if(hintButton)hintButton.textContent="힌트 닫기";markHintUsed()}
   }
   update();missionTimerInterval=setInterval(update,1000);
@@ -1482,7 +1490,6 @@ function showGame(data){
 }
 function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀의 총점 비교 결과입니다.</p><div class="ranking">'+data.leaderboard.map(function(t){var s=t.summary||{};return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div class="rank-team"><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong><small>해결 '+(s.solved||0)+'/'+(s.total||0)+' · 기술 문제 '+(s.faultsResolved||0)+' · 최고 '+esc(s.fastestLabel||"-")+" "+formatTime(s.fastestMs)+'</small></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
 function wait(icon,title,text){return '<div><div class="icon">'+icon+'</div><h2>'+esc(title)+'</h2><p class="muted">'+esc(text)+'</p></div>'}
-function bonusHtml(c){if(!c.success||!c.pointBreakdown)return "";var labels=[["기본",c.pointBreakdown.base],["시간 보너스",c.pointBreakdown.time],["힌트 없이 해결",c.pointBreakdown.noHint],["기술 문제",c.pointBreakdown.fault],["연속 성공",c.pointBreakdown.streak]].filter(function(item){return item[1]>0});return '<div class="bonus-list">'+labels.map(function(item){return '<span class="bonus-item">'+item[0]+' +'+item[1]+'</span>'}).join("")+'</div>'}
 function roundResultHtml(round){var s=round.summary||{solved:0,total:round.challenges.length,faultsResolved:0,hintsUsed:0,fastestMs:null,fastestLabel:null},allSuccess=s.solved===s.total;return '<div><div class="icon">'+(round.practice?"🎓":allSuccess?"🏆":"🌱")+'</div><h2>'+esc(round.message)+'</h2>'+(round.practice?'<p class="muted">점수에는 포함되지 않았습니다.</p>':'<div class="result-metrics"><div class="result-metric"><span>해결</span><strong>'+s.solved+'/'+s.total+'</strong></div><div class="result-metric"><span>기술 문제</span><strong>'+s.faultsResolved+'개</strong></div><div class="result-metric"><span>가장 빠른 해결</span><strong>'+esc(s.fastestLabel||"-")+' '+formatTime(s.fastestMs)+'</strong></div></div>')+'</div>'}
 function missionHtml(data,c){
   var team=data.team,player=data.player,round=team.round;
@@ -1490,7 +1497,7 @@ function missionHtml(data,c){
   if(!round)return wait("🌿","농장 시스템 대기 중","모든 역할을 확인하고 미션 시작을 기다리세요.");
   if(round.status==="complete")return roundResultHtml(round);
   if(!c)return wait("⌛","문제를 불러오는 중","잠시 기다려 주세요.");
-  if(c.phase==="result")return '<div><div class="icon">'+(c.success?"✅":"❌")+'</div><h2>'+(c.success?"문제 해결 성공!":"문제 해결 실패")+'</h2><p class="muted">'+esc(round.message||"결과를 확인하고 다음 문제를 준비하세요.")+'</p>'+(round.practice?"":'<strong>'+(c.points||0)+'점</strong>'+bonusHtml(c))+'</div>';
+  if(c.phase==="result")return '<div><div class="icon">'+(c.success?"✅":"❌")+'</div><h2>'+(c.success?"문제 해결 성공!":"문제 해결 실패")+'</h2><p class="muted">'+esc(round.message||"결과를 확인하고 다음 문제를 준비하세요.")+'</p>'+(round.practice?"":'<strong>'+(c.points||0)+'점</strong>')+'</div>';
   if(c.kind==="environment"&&c.phase==="sensor"){
     if(c.issueId){var issue=data.issues[c.issueId];return '<div><div class="icon">📡</div><h2>'+esc(issue.label)+' 감지</h2><p>'+esc(issue.message)+'</p><div class="choices">'+Object.keys(data.signals).map(function(id){return '<button onclick="act({type:\\'send_signal\\',signal:\\''+esc(data.signals[id])+'\\'})">'+esc(data.signals[id])+'</button>'}).join("")+'</div>'+hint("지금 문제는 "+issue.label+"이에요. "+data.signals[c.issueId]+" 버튼을 누르세요.")+'</div>'}
     return wait("🙈","센서가 확인 중","문제 상황은 담당 센서에게만 보입니다.");
