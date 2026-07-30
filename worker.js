@@ -416,7 +416,11 @@ export class GameRoom {
       }
       if (request.method === "GET" && url.pathname.startsWith("/play/")) {
         const code = decodeURIComponent(url.pathname.slice(6));
-        return new Response(playerPage(code), {
+        const state = await this.state();
+        const joinTeam = Object.values(state.teams).find(
+          (team) => team.joinCode.toUpperCase() === code.toUpperCase(),
+        );
+        return new Response(playerPage(code, joinTeam?.name), {
           headers: {
             "content-type": "text/html; charset=utf-8",
             "cache-control": "no-store",
@@ -976,15 +980,23 @@ boot();
   );
 }
 
-function playerPage(code) {
+function playerPage(code, teamName = "") {
   const encodedCode = JSON.stringify(code);
   const encodedVersion = JSON.stringify(APP_VERSION);
+  const joinTitle = teamName ? `${teamName} 참가` : "팀 참가";
+  const escapedJoinTitle = joinTitle.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ],
+  );
   return layout(
-    "플레이어 | 스마트 농장",
+    `${escapedJoinTitle} | 스마트 농장`,
     `<main id="playerShell" class="shell">
-      <header class="topbar"><div class="brand"><div id="teamMark" class="logo">♧</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" class="muted">팀 참가</div></div></div><div id="miniScore"></div></header>
+      <header class="topbar"><div class="brand"><div id="teamMark" class="logo">♧</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" class="muted">${escapedJoinTitle}</div></div></div><div id="miniScore"></div></header>
       <section id="join" class="card auth">
-        <h1>팀 참가</h1><p class="muted">이름과 학년을 입력하면 바로 참가합니다.</p>
+        <h1>${escapedJoinTitle}</h1><p class="muted">이름과 학년을 입력하면 바로 참가합니다.</p>
         <form id="joinForm"><div class="field"><label for="name">이름</label><input id="name" maxlength="20" required></div>
         <div class="field"><label for="grade">학년</label><select id="grade" required><option value="">선택</option><option value="1">1학년</option><option value="2">2학년</option><option value="3">3학년</option><option value="4">4학년</option><option value="5">5학년</option><option value="6">6학년</option></select></div>
         <button type="submit" style="width:100%">게임 참가</button></form><div id="joinMessage" class="notice error" hidden></div>
