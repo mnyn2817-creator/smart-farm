@@ -420,7 +420,14 @@ export class GameRoom {
         const joinTeam = Object.values(state.teams).find(
           (team) => team.joinCode.toUpperCase() === code.toUpperCase(),
         );
-        return new Response(playerPage(code, joinTeam?.name), {
+        const joinPresentation = joinTeam
+          ? {
+              name: joinTeam.name,
+              color: TEAM_PRESENTATIONS[joinTeam.id]?.color ?? joinTeam.color,
+              symbol: TEAM_PRESENTATIONS[joinTeam.id]?.symbol ?? "●",
+            }
+          : null;
+        return new Response(playerPage(code, joinPresentation), {
           headers: {
             "content-type": "text/html; charset=utf-8",
             "cache-control": "no-store",
@@ -785,7 +792,7 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px}.grid{display:grid;gap:16px}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .hero{min-height:70vh;display:grid;place-items:center}.hero-inner{width:min(680px,100%);text-align:center}.hero-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:22px}
 .field{display:grid;gap:7px;text-align:left;margin-bottom:14px}.field label{font-size:13px;font-weight:700;color:#405047}.field input,.field select{width:100%;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:10px;background:#fff}
-.auth{width:min(440px,100%);margin:8vh auto}.notice{padding:12px 14px;border-radius:7px;background:#eef4f0;color:#365141;margin-bottom:14px}.error{background:#fdecec;color:#8f2929}
+.auth{width:min(440px,100%);margin:8vh auto}.join-team{border-top:7px solid var(--team)}.join-team h1{color:var(--team)}.join-team button[type=submit]{background:var(--team)}.notice{padding:12px 14px;border-radius:7px;background:#eef4f0;color:#365141;margin-bottom:14px}.error{background:#fdecec;color:#8f2929}
 .scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}.score{border-top:5px solid var(--team);background:#fff;padding:14px;border-radius:7px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
 .score strong{display:block;font-size:24px;margin-top:4px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .team{border-top:6px solid var(--team)}.team-meta{display:flex;gap:15px;flex-wrap:wrap;color:#56635b}.qr-wrap{display:flex;gap:14px;align-items:center}.qr{width:122px;height:122px;background:#fff}.qr img,.qr canvas{display:block;width:122px;height:122px}
@@ -980,11 +987,20 @@ boot();
   );
 }
 
-function playerPage(code, teamName = "") {
+function playerPage(code, team = null) {
   const encodedCode = JSON.stringify(code);
   const encodedVersion = JSON.stringify(APP_VERSION);
-  const joinTitle = teamName ? `${teamName} 참가` : "팀 참가";
+  const joinTitle = team?.name ? `${team.name} 참가` : "팀 참가";
+  const joinColor =
+    team?.color && /^#[0-9a-f]{6}$/i.test(team.color) ? team.color : "#287a4b";
   const escapedJoinTitle = joinTitle.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        character
+      ],
+  );
+  const escapedJoinSymbol = String(team?.symbol ?? "♧").replace(
     /[&<>"']/g,
     (character) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
@@ -993,9 +1009,9 @@ function playerPage(code, teamName = "") {
   );
   return layout(
     `${escapedJoinTitle} | 스마트 농장`,
-    `<main id="playerShell" class="shell">
-      <header class="topbar"><div class="brand"><div id="teamMark" class="logo">♧</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" class="muted">${escapedJoinTitle}</div></div></div><div id="miniScore"></div></header>
-      <section id="join" class="card auth">
+    `<main id="playerShell" class="shell" style="--team:${joinColor}">
+      <header class="topbar"><div class="brand"><div id="teamMark" class="logo" style="background:${joinColor}">${escapedJoinSymbol}</div><div><strong>스마트 농장 구조대</strong><div id="teamLabel" style="color:${joinColor};font-weight:700">${escapedJoinTitle}</div></div></div><div id="miniScore"></div></header>
+      <section id="join" class="card auth join-team">
         <h1>${escapedJoinTitle}</h1><p class="muted">이름과 학년을 입력하면 바로 참가합니다.</p>
         <form id="joinForm"><div class="field"><label for="name">이름</label><input id="name" maxlength="20" required></div>
         <div class="field"><label for="grade">학년</label><select id="grade" required><option value="">선택</option><option value="1">1학년</option><option value="2">2학년</option><option value="3">3학년</option><option value="4">4학년</option><option value="5">5학년</option><option value="6">6학년</option></select></div>
