@@ -142,7 +142,22 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   assert.equal(team.round.practice, true);
   assert.equal(challenge.issueId, "heat");
 
-  await playerAction(playerForRole(team, "sensor_temp"), {
+  const practiceSensorId = playerForRole(team, "sensor_temp");
+  const practiceSensorAuth = authByPlayer.get(practiceSensorId);
+  const earlyHintResponse = await room.fetch(
+    request("/api/player/action", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-player-id": practiceSensorAuth.playerId,
+        "x-player-token": practiceSensorAuth.playerToken,
+      },
+      body: JSON.stringify({ type: "use_hint" }),
+    }),
+  );
+  assert.equal(earlyHintResponse.status, 400);
+
+  await playerAction(practiceSensorId, {
     type: "send_signal",
     signal: liveState.signals.heat,
   });
@@ -251,7 +266,9 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   for (const id of ["A", "B", "C"]) {
     for (let index = 0; index < 3; index += 1) {
       const elapsedMs =
-        id === "B" && index === 0
+        id === "A" && index === 0
+          ? 31_000
+          : id === "B" && index === 0
           ? 11_000
           : id === "C" && index === 0
             ? 21_000
@@ -271,12 +288,12 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   );
   assert.equal(adminData.competition.complete, true);
   assert.equal(adminData.competition.leaderboard.length, 3);
-  assert.equal(adminData.state.teams.A.score, 600);
+  assert.equal(adminData.state.teams.A.score, 570);
   assert.equal(adminData.state.teams.B.score, 590);
   assert.equal(adminData.state.teams.C.score, 550);
   assert.deepEqual(
     adminData.state.teams.A.round.challenges.map((challenge) => challenge.points),
-    [200, 200, 200],
+    [170, 200, 200],
   );
   assert.equal(adminData.state.teams.B.round.challenges[0].points, 190);
   assert.deepEqual(

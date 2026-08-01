@@ -7,7 +7,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-08-01-1";
+const APP_VERSION = "2026-08-01-2";
 const SCORE_TIMER_LIMIT_MS = 30_000;
 const CHALLENGE_START_SCORE = 200;
 const CHALLENGE_SCORE_STEP_MS = 10_000;
@@ -401,6 +401,11 @@ function challengeScore(round, challenge, success) {
     elapsedMs,
     breakdown,
   };
+}
+
+function hintAvailable(round, challenge) {
+  const startedAt = new Date(challenge.startedAt ?? round.startedAt).getTime();
+  return Number.isFinite(startedAt) && Date.now() - startedAt >= SCORE_TIMER_LIMIT_MS;
 }
 
 function completeChallenge(team, success) {
@@ -1042,6 +1047,9 @@ export class GameRoom {
     normalizeDevicePhase(challenge);
 
     if (action.type === "use_hint" && player.roles.includes(challengeRole(challenge))) {
+      if (!hintAvailable(team.round, challenge)) {
+        return json({ error: "힌트는 30초 타이머가 끝난 뒤에 공개됩니다." }, 400);
+      }
       challenge.hintUsed = true;
     } else if (
       action.type === "send_signal" &&
@@ -1407,11 +1415,11 @@ var PAGE_VERSION=${encodedVersion};
 var KEY="farm-player-"+TEAM_CODE;
 var auth=JSON.parse(localStorage.getItem(KEY)||"null");
 var last=null;
-var hintVisible=localStorage.getItem(KEY+"-hint")==="1";
+var hintVisible=false;
 var resultTimer=null;
 var missionTimerInterval=null;
-var autoHintChallengeId=null;
-var hintMarkedChallengeId=null;
+var renderedChallengeId=null;
+var hintReportedChallengeId=null;
 function esc(value){return String(value==null?"":value).replace(/[&<>"']/g,function(ch){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[ch]})}
 async function responseData(response){
   var text=await response.text();
@@ -1453,8 +1461,8 @@ function closeSignals(){var dialog=document.getElementById("signalDialog");if(di
 function openScores(){var dialog=document.getElementById("scoreDialog");if(dialog.showModal)dialog.showModal();else dialog.setAttribute("open","")}
 function closeScores(){var dialog=document.getElementById("scoreDialog");if(dialog.close)dialog.close();else dialog.removeAttribute("open")}
 function markHintUsed(){if(!auth)return;fetch("/api/player/action",{method:"POST",headers:headers(),body:JSON.stringify({type:"use_hint"})}).catch(function(){})}
-function toggleHint(){hintVisible=!hintVisible;localStorage.setItem(KEY+"-hint",hintVisible?"1":"0");if(hintVisible){var round=last&&last.team.round,c=round&&round.challenges[round.challengeIndex];if(c)hintMarkedChallengeId=c.id;markHintUsed()}var box=document.getElementById("hintBox"),button=document.getElementById("hintToggle");if(box)box.hidden=!hintVisible;if(button)button.textContent=hintVisible?"힌트 닫기":"힌트 보기"}
-function hint(text){return '<div class="hint-area"><button id="hintToggle" class="secondary" onclick="toggleHint()">'+(hintVisible?"힌트 닫기":"힌트 보기")+'</button><div id="hintBox" class="hint-box"'+(hintVisible?"":" hidden")+'>'+esc(text)+'</div></div>'}
+function revealHint(c){if(!c||hintVisible)return;hintVisible=true;var box=document.getElementById("hintBox"),button=document.getElementById("hintToggle");if(box)box.hidden=false;if(button)button.hidden=true;if(hintReportedChallengeId!==c.id){hintReportedChallengeId=c.id;markHintUsed()}}
+function hint(text){return '<div class="hint-area"><button id="hintToggle" class="secondary" disabled'+(hintVisible?' hidden':'')+'>힌트는 30초 후 공개됩니다</button><div id="hintBox" class="hint-box"'+(hintVisible?"":" hidden")+'>'+esc(text)+'</div></div>'}
 function scheduleResultAdvance(c){if(resultTimer){clearTimeout(resultTimer);resultTimer=null}if(!c||c.phase!=="result"||!c.completedAt)return;var elapsed=Date.now()-new Date(c.completedAt).getTime(),delay=Math.max(50,950-elapsed);resultTimer=setTimeout(function(){resultTimer=null;if(auth&&!document.hidden)load()},delay)}
 function nextRoleId(data,c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return "computer";if(c.kind==="environment"&&c.phase==="computer")return "device_operator";if(c.kind==="fault"&&c.phase==="fault_alert")return "engineer";return null}
 function nextRoleText(data,c){var id=nextRoleId(data,c);return id?"다음: "+roleLabel(id,data):"이 역할이 마지막 단계입니다."}
@@ -1467,16 +1475,16 @@ function renderMissionTimer(data,c,isMyTurn){
   box.hidden=false;
   function update(){
     var limit=data.scoreTimerLimitMs||30000,elapsed=Math.max(0,Date.now()-new Date(c.startedAt||round.startedAt).getTime()),remaining=Math.max(0,limit-elapsed),percent=Math.max(0,Math.min(100,remaining/limit*100));
-    if(round.practice){box.className="mission-timer";box.innerHTML='<div class="timer-head"><span>연습 라운드</span><strong>점수 없음</strong></div><div class="timer-note">버튼과 역할 순서를 익혀 보세요.</div>';return}
-    var scoring=data.scoring||{startScore:200,stepMs:10000,minScore:170},potential=Math.max(scoring.minScore,scoring.startScore-Math.floor(elapsed/scoring.stepMs)*10);
-    box.className="mission-timer"+(remaining<=0?" timer-expired":"");
-    box.innerHTML='<div class="timer-head"><span>'+(remaining>0?"점수 타이머 "+Math.ceil(remaining/1000)+"초":"점수 타이머 종료")+'</span><strong>현재 '+potential+'점</strong></div><div class="timer-track"><div class="timer-fill" style="width:'+percent+'%"></div></div><div class="timer-note">'+(remaining>0?"200점에서 시작해 10초마다 10점씩 줄어듭니다.":"170점이 유지되며 힌트가 자동으로 열립니다.")+'</div>';
-    if(remaining<=0&&isMyTurn&&autoHintChallengeId!==c.id){autoHintChallengeId=c.id;hintMarkedChallengeId=c.id;hintVisible=true;localStorage.setItem(KEY+"-hint","1");var hintBox=document.getElementById("hintBox"),hintButton=document.getElementById("hintToggle");if(hintBox)hintBox.hidden=false;if(hintButton)hintButton.textContent="힌트 닫기";markHintUsed()}
+    if(round.practice){box.className="mission-timer"+(remaining<=0?" timer-expired":"");box.innerHTML='<div class="timer-head"><span>연습 라운드</span><strong>'+(remaining>0?"힌트까지 "+Math.ceil(remaining/1000)+"초":"힌트 공개")+'</strong></div><div class="timer-track"><div class="timer-fill" style="width:'+percent+'%"></div></div><div class="timer-note">'+(remaining>0?"버튼과 역할 순서를 익혀 보세요.":"힌트가 자동으로 열렸습니다.")+'</div>'}
+    else{var scoring=data.scoring||{startScore:200,stepMs:10000,minScore:170},potential=Math.max(scoring.minScore,scoring.startScore-Math.floor(elapsed/scoring.stepMs)*10);box.className="mission-timer"+(remaining<=0?" timer-expired":"");box.innerHTML='<div class="timer-head"><span>'+(remaining>0?"점수 타이머 "+Math.ceil(remaining/1000)+"초":"점수 타이머 종료")+'</span><strong>현재 '+potential+'점</strong></div><div class="timer-track"><div class="timer-fill" style="width:'+percent+'%"></div></div><div class="timer-note">'+(remaining>0?"200점에서 시작해 10초마다 10점씩 줄어듭니다.":"170점이 유지되며 힌트가 자동으로 열립니다.")+'</div>'}
+    if(remaining<=0&&isMyTurn)revealHint(c)
   }
   update();missionTimerInterval=setInterval(update,1000);
 }
 function showGame(data){
   var team=data.team,player=data.player,round=team.round,challenge=round&&round.challenges[round.challengeIndex];
+  var challengeId=challenge&&challenge.id;
+  if(challengeId!==renderedChallengeId){renderedChallengeId=challengeId;hintVisible=false}
   var activeId=activeRoleId(data,challenge),isMyTurn=activeId&&player.roles.includes(activeId);
   document.getElementById("join").hidden=true;document.getElementById("game").hidden=false;
   document.getElementById("playerShell").style.setProperty("--team",team.color);
@@ -1504,7 +1512,6 @@ function showGame(data){
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
   document.getElementById("phase").textContent=round?(round.practice?"연습 ":"본 게임 ")+"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length:"WAITING";
   document.getElementById("mission").innerHTML=missionHtml(data,challenge);
-  if(isMyTurn&&hintVisible&&challenge&&challenge.phase!=="result"&&hintMarkedChallengeId!==challenge.id){hintMarkedChallengeId=challenge.id;markHintUsed()}
   renderMissionTimer(data,challenge,isMyTurn);
   scheduleResultAdvance(challenge);
 }
