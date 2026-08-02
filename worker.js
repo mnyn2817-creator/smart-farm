@@ -1,13 +1,13 @@
 const ROLE_DEFINITIONS = [
-  { id: "sensor_temp", group: "센서", label: "온도 센서", symbol: "℃", description: "농장의 온도가 너무 높은지 살펴봅니다." },
-  { id: "sensor_water", group: "센서", label: "물 센서", symbol: "💧", description: "흙에 물이 충분한지 살펴봅니다." },
-  { id: "sensor_light", group: "센서", label: "햇빛 센서", symbol: "☀", description: "작물이 받을 햇빛이 부족한지 살펴봅니다." },
+  { id: "sensor_integrated", group: "센서", label: "종합 센서", symbol: "◉", description: "온도·흙의 수분·햇빛을 확인하고 알맞은 신호를 보냅니다." },
   { id: "computer", group: "컴퓨터", label: "메인 컴퓨터", symbol: "▣", description: "센서의 신호를 읽고 어떤 기기를 움직일지 결정합니다." },
-  { id: "device_operator", group: "기기", label: "자동 기기 담당", symbol: "⚙", description: "컴퓨터가 고른 환풍기·스프링클러·생장 조명을 작동합니다." },
+  { id: "device_fan", group: "기기", label: "환풍기 담당", symbol: "♨", description: "온도가 높을 때 환풍기를 켜고 정상 온도가 되면 끕니다." },
+  { id: "device_sprinkler", group: "기기", label: "스프링클러 담당", symbol: "💧", description: "물이 부족할 때 스프링클러를 켜고 흙이 촉촉해지면 끕니다." },
+  { id: "device_light", group: "기기", label: "조명 담당", symbol: "☀", description: "햇빛이 부족할 때 조명을 켜고 빛이 충분해지면 끕니다." },
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-08-01-2";
+const APP_VERSION = "2026-08-02-1";
 const SCORE_TIMER_LIMIT_MS = 30_000;
 const CHALLENGE_START_SCORE = 200;
 const CHALLENGE_SCORE_STEP_MS = 10_000;
@@ -16,19 +16,19 @@ const CHALLENGE_MIN_SCORE = 170;
 const ISSUE_DEFINITIONS = {
   heat: {
     label: "온도 상승",
-    sensorRole: "sensor_temp",
+    sensorRole: "sensor_integrated",
     deviceId: "device_fan",
     message: "농장 온도가 36°C까지 올라갔어요. 잎이 축 늘어지고 있습니다.",
   },
   drought: {
     label: "가뭄",
-    sensorRole: "sensor_water",
+    sensorRole: "sensor_integrated",
     deviceId: "device_sprinkler",
     message: "토양 수분이 18%까지 떨어졌어요. 땅이 바싹 말랐습니다.",
   },
   low_light: {
     label: "햇빛 부족",
-    sensorRole: "sensor_light",
+    sensorRole: "sensor_integrated",
     deviceId: "device_light",
     message: "빛의 양이 너무 적어요. 작물이 충분히 자라지 못하고 있습니다.",
   },
@@ -43,7 +43,7 @@ const DEFAULT_SIGNALS = {
 const DEVICE_DEFINITIONS = [
   { id: "device_fan", label: "환풍기" },
   { id: "device_sprinkler", label: "스프링클러" },
-  { id: "device_light", label: "생장 조명" },
+  { id: "device_light", label: "조명" },
 ];
 const DEVICE_IDS = new Set(DEVICE_DEFINITIONS.map((device) => device.id));
 
@@ -64,10 +64,10 @@ const DEVICE_SCENES = {
   },
   device_light: {
     position: "0% 100%",
-    startLabel: "생장 조명 작동 시작",
-    runningTitle: "생장 조명이 작물에 빛을 비추고 있어요",
-    readyText: "작물이 받을 빛이 충분합니다. 생장 조명을 멈춰 주세요.",
-    stopLabel: "생장 조명 작동 중지",
+    startLabel: "조명 켜기",
+    runningTitle: "조명이 작물에 빛을 비추고 있어요",
+    readyText: "작물이 받을 빛이 충분합니다. 조명을 꺼 주세요.",
+    stopLabel: "조명 끄기",
   },
 };
 
@@ -173,6 +173,7 @@ function normalizeState(state) {
   }
   for (const id of TEAM_IDS) {
     const team = state.teams[id];
+    let migratedLegacyRoles = false;
     if (!team.stats) {
       team.stats = emptyStats();
       changed = true;
@@ -185,14 +186,26 @@ function normalizeState(state) {
       }
     }
     for (const player of team.players) {
-      const hadDeviceRole = player.roles.some((role) => role.startsWith("device_"));
-      const nextRoles = player.roles.filter((role) => VALID_ROLES.has(role));
-      if (hadDeviceRole) nextRoles.push("device_operator");
+      const nextRoles = [];
+      for (const role of player.roles) {
+        if (VALID_ROLES.has(role)) nextRoles.push(role);
+        else if (["sensor_temp", "sensor_water", "sensor_light"].includes(role)) {
+          nextRoles.push("sensor_integrated");
+          migratedLegacyRoles = true;
+        } else if (role === "device_operator") {
+          nextRoles.push(...DEVICE_DEFINITIONS.map((device) => device.id));
+          migratedLegacyRoles = true;
+        }
+      }
       const uniqueRoles = [...new Set(nextRoles)];
       if (uniqueRoles.join("|") !== player.roles.join("|")) {
         player.roles = uniqueRoles;
         changed = true;
       }
+    }
+    if (migratedLegacyRoles && [5, 6].includes(team.players.length)) {
+      recommendRoles(team);
+      changed = true;
     }
     const validRound = team.round?.challenges?.every((challenge) =>
       challenge.kind === "environment"
@@ -233,10 +246,10 @@ function challengeRole(challenge) {
     challenge.kind === "environment" &&
     (challenge.phase === "device" || challenge.phase === "device_running")
   ) {
-    return "device_operator";
+    return challenge.selectedDevice ?? null;
   }
   if (challenge.kind === "fault" && challenge.phase === "fault_alert") {
-    return "device_operator";
+    return challenge.targetDevice ?? null;
   }
   if (challenge.kind === "fault" && challenge.phase === "repair") {
     return "engineer";
@@ -274,18 +287,18 @@ function recommendRoles(team) {
   const bundles =
     team.players.length === 5
       ? [
-          ["sensor_temp"],
-          ["sensor_water"],
-          ["sensor_light"],
+          ["sensor_integrated"],
           ["computer", "engineer"],
-          ["device_operator"],
+          ["device_fan"],
+          ["device_sprinkler"],
+          ["device_light"],
         ]
       : [
-          ["sensor_temp"],
-          ["sensor_water"],
-          ["sensor_light"],
+          ["sensor_integrated"],
           ["computer"],
-          ["device_operator"],
+          ["device_fan"],
+          ["device_sprinkler"],
+          ["device_light"],
           ["engineer"],
         ];
   bundles.forEach((bundle, index) => {
@@ -318,18 +331,18 @@ function makeRound(
     return (
       assigned.has("computer") &&
       assigned.has(issue.sensorRole) &&
-      assigned.has("device_operator")
+      assigned.has(issue.deviceId)
     );
   });
-  const availableDevices = assigned.has("device_operator")
-    ? DEVICE_DEFINITIONS.map((device) => device.id)
-    : [];
+  const availableDevices = DEVICE_DEFINITIONS
+    .map((device) => device.id)
+    .filter((deviceId) => assigned.has(deviceId));
   const canEnvironment = availableIssues.length > 0;
   const canFault = assigned.has("engineer") && availableDevices.length > 0;
 
   if (practice) {
-    if (["sensor_temp", "computer", "device_operator"].some((role) => !assigned.has(role))) {
-      throw new Error("연습에는 온도 센서·메인 컴퓨터·자동 기기 담당 역할이 필요합니다.");
+    if (["sensor_integrated", "computer", "device_fan"].some((role) => !assigned.has(role))) {
+      throw new Error("연습에는 종합 센서·메인 컴퓨터·환풍기 담당 역할이 필요합니다.");
     }
   } else if (!canEnvironment && !canFault) {
     throw new Error("센서-컴퓨터-기기 또는 기기-엔지니어 역할을 먼저 배정해 주세요.");
@@ -343,20 +356,28 @@ function makeRound(
     issueId,
     phase: "sensor",
   });
-  const fault = () => ({
+  const fault = (targetDevice = randomItem(availableDevices)) => ({
     id: crypto.randomUUID(),
     kind: "fault",
     faultId: randomItem(FAULTS).id,
-    targetDevice: randomItem(availableDevices),
+    targetDevice,
     phase: "fault_alert",
   });
 
-  const faultFirst = Math.random() < 0.5;
+  const deviceOrder = [...availableDevices].sort(() => Math.random() - 0.5);
+  const scheduledDevices = Array.from(
+    { length: count },
+    (_, index) => deviceOrder[index % deviceOrder.length],
+  );
   const challenges = practice
     ? [environment("heat")]
-    : Array.from({ length: count }, (_, index) =>
-        (index + (faultFirst ? 1 : 0)) % 2 === 0 ? environment() : fault(),
-      );
+    : scheduledDevices.map((deviceId, index) => {
+        if (index % 2 === 1) return fault(deviceId);
+        const issueId = availableIssues.find(
+          (candidate) => ISSUE_DEFINITIONS[candidate].deviceId === deviceId,
+        );
+        return environment(issueId ?? randomItem(availableIssues));
+      });
   initializeChallenge(challenges[0]);
 
   return {
@@ -978,7 +999,7 @@ export class GameRoom {
       if (
         challenge.kind === "fault" &&
         challenge.targetDevice &&
-        !player.roles.includes("device_operator") &&
+        !player.roles.includes(challenge.targetDevice) &&
         !(challenge.phase === "repair" && player.roles.includes("engineer"))
       ) {
         delete challenge.faultId;
@@ -1076,7 +1097,7 @@ export class GameRoom {
       challenge.kind === "environment" &&
       challenge.phase === "device" &&
       challenge.selectedDevice &&
-      player.roles.includes("device_operator")
+      player.roles.includes(challenge.selectedDevice)
     ) {
       if (challenge.deviceStartedAt) {
         const issue = ISSUE_DEFINITIONS[challenge.issueId];
@@ -1094,7 +1115,7 @@ export class GameRoom {
       challenge.phase === "device" &&
       challenge.deviceStartedAt &&
       challenge.selectedDevice &&
-      player.roles.includes("device_operator")
+      player.roles.includes(challenge.selectedDevice)
     ) {
       const issue = ISSUE_DEFINITIONS[challenge.issueId];
       completeChallenge(
@@ -1107,7 +1128,7 @@ export class GameRoom {
       challenge.kind === "fault" &&
       challenge.phase === "fault_alert" &&
       challenge.targetDevice &&
-      player.roles.includes("device_operator")
+      player.roles.includes(challenge.targetDevice)
     ) {
       challenge.phase = "repair";
     } else if (
@@ -1279,7 +1300,7 @@ function render(){
   ["A","B","C"].forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
 }
 function roleName(id){var role=roles.find(function(item){return item.id===id});return role?role.label:id}
-function adminActiveRole(c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return issues[c.issueId]&&issues[c.issueId].sensorRole;if(c.kind==="environment"&&c.phase==="computer")return "computer";if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return "device_operator";if(c.kind==="fault"&&c.phase==="fault_alert")return "device_operator";if(c.kind==="fault"&&c.phase==="repair")return "engineer";return null}
+function adminActiveRole(c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return issues[c.issueId]&&issues[c.issueId].sensorRole;if(c.kind==="environment"&&c.phase==="computer")return "computer";if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return c.selectedDevice||null;if(c.kind==="fault"&&c.phase==="fault_alert")return c.targetDevice||null;if(c.kind==="fault"&&c.phase==="repair")return "engineer";return null}
 function formatTime(ms){if(!Number.isFinite(ms))return "-";return (ms/1000).toFixed(ms<10000?1:0)+"초"}
 function historyHtml(item){var date=new Date(item.endedAt).toLocaleString("ko-KR"),scores=item.teams.map(function(team){return team.name+" "+team.score+"점"}).join(" · ");return '<div class="history-row"><div><strong>'+esc(date)+' 수업</strong><div class="history-scores">'+esc(scores)+'</div></div><div><strong>'+esc(item.winners.join(", "))+'</strong><div class="muted">1위</div></div></div>'}
 function teamHtml(id){
@@ -1451,8 +1472,8 @@ function activeRoleId(data,c){
   if(c.activeRole)return c.activeRole;
   if(c.kind==="environment"&&c.phase==="sensor"&&c.issueId)return data.issues[c.issueId].sensorRole;
   if(c.kind==="environment"&&c.phase==="computer")return "computer";
-  if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return "device_operator";
-  if(c.kind==="fault"&&c.phase==="fault_alert")return "device_operator";
+  if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return c.selectedDevice||null;
+  if(c.kind==="fault"&&c.phase==="fault_alert")return c.targetDevice||null;
   if(c.kind==="fault"&&c.phase==="repair")return "engineer";
   return null;
 }
@@ -1464,9 +1485,9 @@ function markHintUsed(){if(!auth)return;fetch("/api/player/action",{method:"POST
 function revealHint(c){if(!c||hintVisible)return;hintVisible=true;var box=document.getElementById("hintBox"),button=document.getElementById("hintToggle");if(box)box.hidden=false;if(button)button.hidden=true;if(hintReportedChallengeId!==c.id){hintReportedChallengeId=c.id;markHintUsed()}}
 function hint(text){return '<div class="hint-area"><button id="hintToggle" class="secondary" disabled'+(hintVisible?' hidden':'')+'>힌트는 30초 후 공개됩니다</button><div id="hintBox" class="hint-box"'+(hintVisible?"":" hidden")+'>'+esc(text)+'</div></div>'}
 function scheduleResultAdvance(c){if(resultTimer){clearTimeout(resultTimer);resultTimer=null}if(!c||c.phase!=="result"||!c.completedAt)return;var elapsed=Date.now()-new Date(c.completedAt).getTime(),delay=Math.max(50,950-elapsed);resultTimer=setTimeout(function(){resultTimer=null;if(auth&&!document.hidden)load()},delay)}
-function nextRoleId(data,c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return "computer";if(c.kind==="environment"&&c.phase==="computer")return "device_operator";if(c.kind==="fault"&&c.phase==="fault_alert")return "engineer";return null}
-function nextRoleText(data,c){var id=nextRoleId(data,c);return id?"다음: "+roleLabel(id,data):"이 역할이 마지막 단계입니다."}
-function flowHtml(data,c){if(!c||c.phase==="result")return "";var steps,current;if(c.kind==="environment"){var sensorLabel=c.phase==="sensor"&&c.activeRole?roleLabel(c.activeRole,data):c.issueId?roleLabel(data.issues[c.issueId].sensorRole,data):"센서 감지";steps=[sensorLabel,"메인 컴퓨터",c.selectedDevice?deviceLabel(c.selectedDevice,data):"자동 기기 담당"];current=c.phase==="sensor"?0:c.phase==="computer"?1:2}else{steps=[c.targetDevice?deviceLabel(c.targetDevice,data):"자동 기기 담당","엔지니어"];current=c.phase==="fault_alert"?0:1}return steps.map(function(label,index){return '<div class="flow-step '+(index<current?"done":index===current?"current":"")+'">'+(index+1)+". "+esc(label)+'</div>'}).join("")}
+function nextRoleId(data,c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return "computer";if(c.kind==="fault"&&c.phase==="fault_alert")return "engineer";return null}
+function nextRoleText(data,c){if(c&&c.kind==="environment"&&c.phase==="computer")return "다음: 선택한 기기 담당";var id=nextRoleId(data,c);return id?"다음: "+roleLabel(id,data):"이 역할이 마지막 단계입니다."}
+function flowHtml(data,c){if(!c||c.phase==="result")return "";var steps,current;if(c.kind==="environment"){var sensorLabel=c.phase==="sensor"&&c.activeRole?roleLabel(c.activeRole,data):c.issueId?roleLabel(data.issues[c.issueId].sensorRole,data):"센서 감지";steps=[sensorLabel,"메인 컴퓨터",c.selectedDevice?deviceLabel(c.selectedDevice,data):"선택한 기기 담당"];current=c.phase==="sensor"?0:c.phase==="computer"?1:2}else{steps=[c.targetDevice?deviceLabel(c.targetDevice,data)+" 담당":"기기 담당","엔지니어"];current=c.phase==="fault_alert"?0:1}return steps.map(function(label,index){return '<div class="flow-step '+(index<current?"done":index===current?"current":"")+'">'+(index+1)+". "+esc(label)+'</div>'}).join("")}
 function formatTime(ms){if(!Number.isFinite(ms))return "-";return (ms/1000).toFixed(ms<10000?1:0)+"초"}
 function renderMissionTimer(data,c,isMyTurn){
   if(missionTimerInterval){clearInterval(missionTimerInterval);missionTimerInterval=null}
@@ -1534,11 +1555,11 @@ function missionHtml(data,c){
     return wait("🔄","컴퓨터가 판단 중","전달된 신호를 바탕으로 작동할 기기를 고르고 있습니다.");
   }
   if(c.kind==="environment"&&c.phase==="device"){
-    if(player.roles.includes("device_operator")){var scene=deviceScene(c.selectedDevice,data);if(c.deviceStartedAt)return '<div><div class="device-visual" role="img" aria-label="'+esc(deviceLabel(c.selectedDevice,data))+' 작동 결과" style="background-position:'+scene.position+'"></div><h2>'+esc(scene.runningTitle)+'</h2><div class="device-status"><strong>농장 상태 확인</strong><p>'+esc(scene.readyText)+'</p></div><div class="choices"><button class="amber" onclick="act({type:\\'stop_device\\'})">'+esc(scene.stopLabel)+'</button></div>'+hint(scene.readyText+" 아래의 "+scene.stopLabel+" 버튼을 누르면 완료돼요.")+'</div>';return '<div><div class="device-visual" role="img" aria-label="'+esc(deviceLabel(c.selectedDevice,data))+' 작동 전과 후" style="background-position:'+scene.position+'"></div><h2>'+esc(deviceLabel(c.selectedDevice,data))+'를 작동하세요</h2><p>컴퓨터의 명령을 확인하고 기기를 시작하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">'+esc(scene.startLabel)+'</button></div>'+hint(scene.startLabel+" 버튼을 누르세요. 농장 상태가 바뀌면 기기를 멈추는 단계가 나와요.")+'</div>'}
-    return wait("⚙️","기기 작동 준비 중","자동 기기 담당자가 "+deviceLabel(c.selectedDevice,data)+"를 시작해야 합니다.");
+    if(player.roles.includes(c.selectedDevice)){var scene=deviceScene(c.selectedDevice,data);if(c.deviceStartedAt)return '<div><div class="device-visual" role="img" aria-label="'+esc(deviceLabel(c.selectedDevice,data))+' 작동 결과" style="background-position:'+scene.position+'"></div><h2>'+esc(scene.runningTitle)+'</h2><div class="device-status"><strong>농장 상태 확인</strong><p>'+esc(scene.readyText)+'</p></div><div class="choices"><button class="amber" onclick="act({type:\\'stop_device\\'})">'+esc(scene.stopLabel)+'</button></div>'+hint(scene.readyText+" 아래의 "+scene.stopLabel+" 버튼을 누르면 완료돼요.")+'</div>';return '<div><div class="device-visual" role="img" aria-label="'+esc(deviceLabel(c.selectedDevice,data))+' 작동 전과 후" style="background-position:'+scene.position+'"></div><h2>'+esc(deviceLabel(c.selectedDevice,data))+'를 작동하세요</h2><p>컴퓨터의 명령을 확인하고 기기를 시작하세요.</p><div class="choices"><button onclick="act({type:\\'activate_device\\'})">'+esc(scene.startLabel)+'</button></div>'+hint(scene.startLabel+" 버튼을 누르세요. 농장 상태가 바뀌면 기기를 멈추는 단계가 나와요.")+'</div>'}
+    return wait("⚙️","기기 작동 준비 중",deviceLabel(c.selectedDevice,data)+" 담당자가 기기를 시작해야 합니다.");
   }
   if(c.kind==="fault"&&c.phase==="fault_alert"){
-    if(c.faultId&&player.roles.includes("device_operator")){var fault=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">⚠️</div><h2>'+esc(deviceLabel(c.targetDevice,data))+" "+esc(fault.label)+'</h2><p>'+esc(fault.detail)+'</p><p><strong>자동 기기 담당</strong>이 엔지니어에게 알려야 합니다.</p><div class="choices"><button class="danger" onclick="act({type:\\'report_fault\\'})">고장 신호 보내기</button></div>'+hint("기기가 고장 났어요. 고장 신호 보내기 버튼을 눌러 엔지니어에게 알려 주세요.")+'</div>'}
+    if(c.faultId&&player.roles.includes(c.targetDevice)){var fault=data.faults.find(function(f){return f.id===c.faultId});return '<div><div class="icon">⚠️</div><h2>'+esc(deviceLabel(c.targetDevice,data))+" "+esc(fault.label)+'</h2><p>'+esc(fault.detail)+'</p><p><strong>'+esc(deviceLabel(c.targetDevice,data))+' 담당</strong>이 엔지니어에게 알려야 합니다.</p><div class="choices"><button class="danger" onclick="act({type:\\'report_fault\\'})">고장 신호 보내기</button></div>'+hint("기기가 고장 났어요. 고장 신호 보내기 버튼을 눌러 엔지니어에게 알려 주세요.")+'</div>'}
     return wait("⚙️","기기 점검 중","고장이 난 기기가 엔지니어에게 신호를 보내야 합니다.");
   }
   if(c.kind==="fault"&&c.phase==="repair"){

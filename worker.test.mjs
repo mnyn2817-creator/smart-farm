@@ -44,6 +44,22 @@ test("existing classroom state is upgraded without losing teams", async () => {
     challengeIndex: 0,
     challenges: [{ kind: "environment", issueId: "high_light", phase: "sensor" }],
   };
+  const legacyRoles = [
+    ["sensor_temp"],
+    ["sensor_water"],
+    ["sensor_light"],
+    ["computer"],
+    ["device_operator"],
+    ["engineer"],
+  ];
+  oldState.teams.B.players = legacyRoles.map((roles, index) => ({
+    id: `legacy-${index}`,
+    token: `legacy-token-${index}`,
+    name: `기존 참가자 ${index + 1}`,
+    grade: "4",
+    roles,
+    joinedAt: new Date().toISOString(),
+  }));
   await room.ctx.storage.put("game", oldState);
 
   const upgraded = await room.state();
@@ -52,8 +68,19 @@ test("existing classroom state is upgraded without losing teams", async () => {
   assert.equal(upgraded.teams.A.name, "새싹팀");
   assert.equal(upgraded.teams.A.stats.completed, 0);
   assert.deepEqual(Object.keys(upgraded.signals), ["heat", "drought", "low_light"]);
-  assert.deepEqual(upgraded.teams.A.players[0].roles, ["computer", "device_operator"]);
+  assert.deepEqual(upgraded.teams.A.players[0].roles, ["device_fan", "computer"]);
   assert.equal(upgraded.teams.A.round, null);
+  assert.deepEqual(
+    upgraded.teams.B.players.map((player) => player.roles),
+    [
+      ["sensor_integrated"],
+      ["computer"],
+      ["device_fan"],
+      ["device_sprinkler"],
+      ["device_light"],
+      ["engineer"],
+    ],
+  );
 });
 
 test("full classroom flow supports readiness, practice, recovery, scoring, and history", async () => {
@@ -142,7 +169,7 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   assert.equal(team.round.practice, true);
   assert.equal(challenge.issueId, "heat");
 
-  const practiceSensorId = playerForRole(team, "sensor_temp");
+  const practiceSensorId = playerForRole(team, "sensor_integrated");
   const practiceSensorAuth = authByPlayer.get(practiceSensorId);
   const earlyHintResponse = await room.fetch(
     request("/api/player/action", {
@@ -165,8 +192,24 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
     type: "computer_decision",
     deviceId: "device_fan",
   });
-  await playerAction(playerForRole(team, "device_operator"), { type: "activate_device" });
-  await playerAction(playerForRole(team, "device_operator"), { type: "stop_device" });
+  const wrongDeviceId = playerForRole(team, "device_light");
+  const wrongDeviceAuth = authByPlayer.get(wrongDeviceId);
+  const wrongDeviceResponse = await room.fetch(
+    request("/api/player/action", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-player-id": wrongDeviceAuth.playerId,
+        "x-player-token": wrongDeviceAuth.playerToken,
+      },
+      body: JSON.stringify({ type: "activate_device" }),
+    }),
+  );
+  assert.equal(wrongDeviceResponse.status, 409);
+  liveState = await room.state();
+  assert.equal(liveState.teams.A.round.challenges[0].deviceStartedAt, undefined);
+  await playerAction(playerForRole(team, "device_fan"), { type: "activate_device" });
+  await playerAction(playerForRole(team, "device_fan"), { type: "stop_device" });
   await admin({ type: "resume_round", teamId: "A" });
 
   liveState = await room.state();
@@ -179,12 +222,8 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   team = liveState.teams.A;
   challenge = team.round.challenges[0];
   const initialRole = challenge.phase === "sensor"
-    ? challenge.issueId === "heat"
-      ? "sensor_temp"
-      : challenge.issueId === "drought"
-        ? "sensor_water"
-        : "sensor_light"
-    : "device_operator";
+    ? "sensor_integrated"
+    : challenge.targetDevice;
   const handoffTarget = team.players.find(
     (player) => !player.roles.includes(initialRole),
   );
@@ -208,6 +247,23 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
 
   await admin({ type: "start_all", count: 3 });
 
+  liveState = await room.state();
+  for (const id of ["A", "B", "C"]) {
+    const usedDevices = liveState.teams[id].round.challenges.map((item) =>
+      item.kind === "environment"
+        ? {
+            heat: "device_fan",
+            drought: "device_sprinkler",
+            low_light: "device_light",
+          }[item.issueId]
+        : item.targetDevice,
+    );
+    assert.deepEqual(
+      [...usedDevices].sort(),
+      ["device_fan", "device_light", "device_sprinkler"],
+    );
+  }
+
   const solveCurrentChallenge = async (
     teamId,
     useHint = false,
@@ -225,9 +281,9 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
 
     if (currentChallenge.kind === "environment") {
       const issue = {
-        heat: ["sensor_temp", "device_fan"],
-        drought: ["sensor_water", "device_sprinkler"],
-        low_light: ["sensor_light", "device_light"],
+        heat: ["sensor_integrated", "device_fan"],
+        drought: ["sensor_integrated", "device_sprinkler"],
+        low_light: ["sensor_integrated", "device_light"],
       }[currentChallenge.issueId];
       const sensorPlayer = playerForRole(currentTeam, issue[0]);
       if (useHint) await playerAction(sensorPlayer, { type: "use_hint" });
@@ -241,11 +297,11 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
         deviceId: issue[1],
       });
       current = await room.state();
-      const devicePlayer = playerForRole(current.teams[teamId], "device_operator");
+      const devicePlayer = playerForRole(current.teams[teamId], issue[1]);
       await playerAction(devicePlayer, { type: "activate_device" });
       await playerAction(devicePlayer, { type: "stop_device" });
     } else {
-      const devicePlayer = playerForRole(currentTeam, "device_operator");
+      const devicePlayer = playerForRole(currentTeam, currentChallenge.targetDevice);
       if (useHint) await playerAction(devicePlayer, { type: "use_hint" });
       await playerAction(devicePlayer, { type: "report_fault" });
       current = await room.state();
