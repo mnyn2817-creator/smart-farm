@@ -7,7 +7,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-08-02-1";
+const APP_VERSION = "2026-08-04-1";
 const SCORE_TIMER_LIMIT_MS = 30_000;
 const CHALLENGE_START_SCORE = 200;
 const CHALLENGE_SCORE_STEP_MS = 10_000;
@@ -92,12 +92,16 @@ const FAULTS = [
   },
 ];
 
-const TEAM_IDS = ["A", "B", "C"];
-const TEAM_PRESENTATIONS = {
+const LEGACY_TEAM_PRESENTATIONS = {
   A: { symbol: "🌱", color: "#287a4b" },
   B: { symbol: "☀", color: "#c97b0b" },
   C: { symbol: "💧", color: "#2275a5" },
 };
+const TEAM_COLOR_PALETTE = [
+  "#287a4b", "#c97b0b", "#2275a5", "#b6465f", "#6f5aa8", "#357a78",
+  "#a45d28", "#4f6f2f", "#9b4f8b", "#3f67a8", "#8b5d33", "#496f64",
+];
+const TEAM_SYMBOLS = ["🌱", "☀", "💧", "◆", "★", "●", "▲", "■", "✦", "◈", "⬟", "✿"];
 const VALID_ROLES = new Set(ROLE_DEFINITIONS.map((role) => role.id));
 
 function randomItem(items) {
@@ -106,6 +110,40 @@ function randomItem(items) {
 
 function newCode(prefix) {
   return prefix + "-" + crypto.randomUUID().replaceAll("-", "").slice(0, 6).toUpperCase();
+}
+
+function teamIds(state) {
+  return Object.keys(state.teams ?? {});
+}
+
+function nextTeamColor(state) {
+  const used = new Set(Object.values(state.teams ?? {}).map((team) => team.color));
+  const paletteColor = TEAM_COLOR_PALETTE.find((color) => !used.has(color));
+  if (paletteColor) return paletteColor;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const bytes = crypto.getRandomValues(new Uint8Array(3));
+    const values = Array.from(bytes, (value) => 45 + (value % 130));
+    const color = "#" + values.map((value) => value.toString(16).padStart(2, "0")).join("");
+    if (!used.has(color)) return color;
+  }
+  return "#" + crypto.randomUUID().replaceAll("-", "").slice(0, 6);
+}
+
+function createTeam(state, name) {
+  const id = "T" + crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase();
+  const index = teamIds(state).length;
+  return {
+    id,
+    name,
+    color: nextTeamColor(state),
+    symbol: TEAM_SYMBOLS[index % TEAM_SYMBOLS.length],
+    joinCode: newCode("TEAM"),
+    score: 0,
+    players: [],
+    round: null,
+    stats: emptyStats(),
+    createdAt: new Date().toISOString(),
+  };
 }
 
 function emptyStats() {
@@ -119,28 +157,14 @@ function emptyStats() {
 }
 
 function createInitialState() {
-  const team = (id, name, color) => ({
-    id,
-    name,
-    color,
-    joinCode: newCode(id),
-    score: 0,
-    players: [],
-    round: null,
-    stats: emptyStats(),
-  });
-
   return {
     auth: { salt: null, passwordHash: null, adminToken: null },
     activeCycleId: null,
+    activeCycleTeamIds: [],
     session: { id: crypto.randomUUID(), startedAt: new Date().toISOString() },
     classHistory: [],
     signals: { ...DEFAULT_SIGNALS },
-    teams: {
-      A: team("A", "새싹팀", "#287a4b"),
-      B: team("B", "햇살팀", "#c97b0b"),
-      C: team("C", "물방울팀", "#2275a5"),
-    },
+    teams: {},
     updatedAt: new Date().toISOString(),
   };
 }
@@ -158,6 +182,12 @@ function normalizeState(state) {
     state.classHistory = [];
     changed = true;
   }
+  if (!Array.isArray(state.activeCycleTeamIds)) {
+    state.activeCycleTeamIds = teamIds(state).filter(
+      (id) => state.activeCycleId && state.teams[id].round?.cycleId === state.activeCycleId,
+    );
+    changed = true;
+  }
   const nextSignals = Object.fromEntries(
     Object.keys(ISSUE_DEFINITIONS).map((issueId) => [
       issueId,
@@ -171,9 +201,23 @@ function normalizeState(state) {
     state.signals = nextSignals;
     changed = true;
   }
-  for (const id of TEAM_IDS) {
+  state.teams ??= {};
+  for (const id of teamIds(state)) {
     const team = state.teams[id];
     let migratedLegacyRoles = false;
+    if (!team.color) {
+      team.color = LEGACY_TEAM_PRESENTATIONS[id]?.color ?? nextTeamColor(state);
+      changed = true;
+    }
+    if (!team.symbol) {
+      const index = teamIds(state).indexOf(id);
+      team.symbol = LEGACY_TEAM_PRESENTATIONS[id]?.symbol ?? TEAM_SYMBOLS[index % TEAM_SYMBOLS.length];
+      changed = true;
+    }
+    if (!team.joinCode) {
+      team.joinCode = newCode("TEAM");
+      changed = true;
+    }
     if (!team.stats) {
       team.stats = emptyStats();
       changed = true;
@@ -520,35 +564,33 @@ function restartChallenge(challenge) {
 }
 
 function publicTeam(team) {
-  const presentation = TEAM_PRESENTATIONS[team.id] ?? {};
   return {
     ...structuredClone(team),
-    color: presentation.color ?? team.color,
-    symbol: presentation.symbol ?? "●",
+    symbol: team.symbol ?? "●",
     players: team.players.map(({ token: _token, ...player }) => ({ ...player })),
   };
 }
 
 function competitionResult(state) {
-  const cycleIds = TEAM_IDS.map((id) => state.teams[id].round?.cycleId);
-  const sameCycle = cycleIds[0] && cycleIds.every((id) => id === cycleIds[0]);
+  const competingIds = (state.activeCycleTeamIds ?? []).filter(
+    (id) =>
+      state.teams[id] &&
+      state.activeCycleId &&
+      state.teams[id].round?.cycleId === state.activeCycleId &&
+      !state.teams[id].round?.practice,
+  );
   const complete =
-    sameCycle &&
-    TEAM_IDS.every(
-      (id) =>
-        state.teams[id].round?.status === "complete" &&
-        !state.teams[id].round?.practice,
-    );
+    competingIds.length > 0 &&
+    competingIds.every((id) => state.teams[id].round?.status === "complete");
   if (!complete) return { complete: false };
 
-  const leaderboard = TEAM_IDS.map((id) => {
+  const leaderboard = competingIds.map((id) => {
     const team = state.teams[id];
-    const presentation = TEAM_PRESENTATIONS[id] ?? {};
     return {
       id,
       name: team.name,
-      symbol: presentation.symbol ?? "●",
-      color: presentation.color ?? team.color,
+      symbol: team.symbol ?? "●",
+      color: team.color,
       score: team.score,
       cycleScore: team.round?.points ?? 0,
       summary: team.round?.summary ?? roundSummary(team.round),
@@ -575,7 +617,7 @@ function competitionResult(state) {
 }
 
 function classSnapshot(state) {
-  const teams = TEAM_IDS.map((id) => {
+  const teams = teamIds(state).map((id) => {
     const team = state.teams[id];
     return {
       id,
@@ -596,7 +638,7 @@ function classSnapshot(state) {
 }
 
 function archiveCurrentClass(state) {
-  const hasActivity = TEAM_IDS.some((id) => {
+  const hasActivity = teamIds(state).some((id) => {
     const team = state.teams[id];
     return team.players.length || team.score || team.stats.completed;
   });
@@ -709,8 +751,8 @@ export class GameRoom {
         const joinPresentation = joinTeam
           ? {
               name: joinTeam.name,
-              color: TEAM_PRESENTATIONS[joinTeam.id]?.color ?? joinTeam.color,
-              symbol: TEAM_PRESENTATIONS[joinTeam.id]?.symbol ?? "●",
+              color: joinTeam.color,
+              symbol: joinTeam.symbol ?? "●",
             }
           : null;
         return new Response(playerPage(code, joinPresentation), {
@@ -754,13 +796,13 @@ export class GameRoom {
     const state = await this.state();
     return json({
       setupRequired: !state.auth.passwordHash,
-      teams: TEAM_IDS.map((id) => {
+      teams: teamIds(state).map((id) => {
         const team = state.teams[id];
         return {
           id: team.id,
           name: team.name,
-          color: TEAM_PRESENTATIONS[id]?.color ?? team.color,
-          symbol: TEAM_PRESENTATIONS[id]?.symbol ?? "●",
+          color: team.color,
+          symbol: team.symbol ?? "●",
           joinCode: team.joinCode,
           score: team.score,
         };
@@ -802,14 +844,14 @@ export class GameRoom {
       state: {
         ...structuredClone(game),
         teams: Object.fromEntries(
-          TEAM_IDS.map((id) => [id, publicTeam(state.teams[id])]),
+          teamIds(state).map((id) => [id, publicTeam(state.teams[id])]),
         ),
       },
       roles: ROLE_DEFINITIONS,
       issues: ISSUE_DEFINITIONS,
       faults: FAULTS,
       readiness: Object.fromEntries(
-        TEAM_IDS.map((id) => [id, teamReadiness(state.teams[id])]),
+        teamIds(state).map((id) => [id, teamReadiness(state.teams[id])]),
       ),
       appVersion: APP_VERSION,
       competition: competitionResult(state),
@@ -831,7 +873,26 @@ export class GameRoom {
     }
     const action = await request.json();
 
-    if (action.type === "save_signals") {
+    if (action.type === "add_team") {
+      const name = String(action.name ?? "").trim().slice(0, 20);
+      if (!name) throw new Error("팀명을 입력해 주세요.");
+      if (
+        Object.values(state.teams).some(
+          (team) => team.name.toLocaleLowerCase("ko-KR") === name.toLocaleLowerCase("ko-KR"),
+        )
+      ) {
+        throw new Error("이미 같은 이름의 팀이 있습니다.");
+      }
+      const team = createTeam(state, name);
+      state.teams[team.id] = team;
+    } else if (action.type === "delete_team") {
+      const team = state.teams[action.teamId];
+      if (!team) throw new Error("팀을 찾을 수 없습니다.");
+      delete state.teams[action.teamId];
+      state.activeCycleTeamIds = (state.activeCycleTeamIds ?? []).filter(
+        (id) => id !== action.teamId,
+      );
+    } else if (action.type === "save_signals") {
       const nextSignals = {};
       for (const issueId of Object.keys(ISSUE_DEFINITIONS)) {
         const value = String(action.signals?.[issueId] ?? "").trim();
@@ -857,37 +918,48 @@ export class GameRoom {
     } else if (action.type === "start_all") {
       const cycleId = crypto.randomUUID();
       state.activeCycleId = cycleId;
+      const ids = teamIds(state).filter((id) => state.teams[id].players.length > 0);
+      if (!ids.length) throw new Error("게임에 참가한 팀이 없습니다.");
+      state.activeCycleTeamIds = ids;
       const rounds = Object.fromEntries(
-        TEAM_IDS.map((id) => [id, makeRound(state.teams[id], action.count, cycleId)]),
+        ids.map((id) => [id, makeRound(state.teams[id], action.count, cycleId)]),
       );
-      for (const id of TEAM_IDS) state.teams[id].round = rounds[id];
+      for (const id of ids) state.teams[id].round = rounds[id];
     } else if (action.type === "start_practice_all") {
       const cycleId = crypto.randomUUID();
       state.activeCycleId = cycleId;
+      const ids = teamIds(state).filter((id) => state.teams[id].players.length > 0);
+      if (!ids.length) throw new Error("연습에 참가한 팀이 없습니다.");
+      state.activeCycleTeamIds = [];
       const rounds = Object.fromEntries(
-        TEAM_IDS.map((id) => [
+        ids.map((id) => [
           id,
           makeRound(state.teams[id], 1, cycleId, { practice: true }),
         ]),
       );
-      for (const id of TEAM_IDS) state.teams[id].round = rounds[id];
+      for (const id of ids) state.teams[id].round = rounds[id];
     } else if (action.type === "recommend_all_roles") {
-      for (const id of TEAM_IDS) recommendRoles(state.teams[id]);
+      for (const id of teamIds(state)) {
+        if (state.teams[id].players.length) recommendRoles(state.teams[id]);
+      }
     } else if (action.type === "reset_all") {
       state.activeCycleId = null;
-      for (const id of TEAM_IDS) {
+      state.activeCycleTeamIds = [];
+      for (const id of teamIds(state)) {
         state.teams[id].score = 0;
         state.teams[id].round = null;
         state.teams[id].stats = emptyStats();
       }
     } else if (action.type === "clear_players") {
       state.activeCycleId = null;
-      for (const id of TEAM_IDS) clearTeamForNewClass(state.teams[id], true);
+      state.activeCycleTeamIds = [];
+      for (const id of teamIds(state)) clearTeamForNewClass(state.teams[id], true);
     } else if (action.type === "new_class") {
       archiveCurrentClass(state);
       state.activeCycleId = null;
+      state.activeCycleTeamIds = [];
       state.session = { id: crypto.randomUUID(), startedAt: new Date().toISOString() };
-      for (const id of TEAM_IDS) clearTeamForNewClass(state.teams[id], true);
+      for (const id of teamIds(state)) clearTeamForNewClass(state.teams[id], true);
     } else {
       const team = state.teams[action.teamId];
       if (!team) throw new Error("팀을 찾을 수 없습니다.");
@@ -899,8 +971,15 @@ export class GameRoom {
       } else if (action.type === "recommend_roles") {
         recommendRoles(team);
       } else if (action.type === "start_round") {
-        if (!state.activeCycleId || competitionResult(state).complete) {
+        if (
+          !state.activeCycleId ||
+          !state.activeCycleTeamIds?.length ||
+          competitionResult(state).complete
+        ) {
           state.activeCycleId = crypto.randomUUID();
+          state.activeCycleTeamIds = teamIds(state).filter(
+            (id) => state.teams[id].players.length > 0,
+          );
         }
         team.round = makeRound(team, action.count, state.activeCycleId);
       } else if (action.type === "start_practice") {
@@ -1022,14 +1101,13 @@ export class GameRoom {
         minScore: CHALLENGE_MIN_SCORE,
       },
       appVersion: APP_VERSION,
-      teamScores: TEAM_IDS.map((id) => {
+      teamScores: teamIds(state).map((id) => {
         const scoreTeam = state.teams[id];
-        const presentation = TEAM_PRESENTATIONS[id] ?? {};
         return {
           id,
           name: scoreTeam.name,
-          symbol: presentation.symbol ?? "●",
-          color: presentation.color ?? scoreTeam.color,
+          symbol: scoreTeam.symbol ?? "●",
+          color: scoreTeam.color,
           score: scoreTeam.score,
         };
       }),
@@ -1157,18 +1235,18 @@ button:hover{filter:brightness(.95)}button:disabled{opacity:.45;cursor:not-allow
 a{color:inherit}.shell{width:min(1180px,100%);margin:0 auto;padding:24px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:22px}
 .brand{display:flex;align-items:center;gap:12px}.logo{display:grid;place-items:center;width:44px;height:44px;border-radius:7px;background:#247247;color:#fff;font-size:24px}
 h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{font-size:22px}h3{font-size:17px}.muted{color:var(--muted)}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px}.grid{display:grid;gap:16px}.grid3{grid-template-columns:repeat(3,minmax(0,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px}.grid{display:grid;gap:16px}.grid3{grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
 .hero{min-height:70vh;display:grid;place-items:center}.hero-inner{width:min(680px,100%);text-align:center}.hero-actions{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-top:22px}
 .field{display:grid;gap:7px;text-align:left;margin-bottom:14px}.field label{font-size:13px;font-weight:700;color:#405047}.field input,.field select{width:100%;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:10px;background:#fff}
 .auth{width:min(440px,100%);margin:8vh auto}.join-team{border-top:7px solid var(--team)}.join-team h1{color:var(--team)}.join-team button[type=submit]{background:var(--team)}.notice{padding:12px 14px;border-radius:7px;background:#eef4f0;color:#365141;margin-bottom:14px}.error{background:#fdecec;color:#8f2929}
-.scorebar{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}.score{border-top:5px solid var(--team);background:#fff;padding:14px;border-radius:7px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
+.scorebar{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px}.score{border-top:5px solid var(--team);background:#fff;padding:14px;border-radius:7px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
 .score strong{display:block;font-size:24px;margin-top:4px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .team{border-top:6px solid var(--team)}.team-meta{display:flex;gap:15px;flex-wrap:wrap;color:#56635b}.qr-wrap{display:flex;gap:14px;align-items:center}.qr{width:122px;height:122px;background:#fff}.qr img,.qr canvas{display:block;width:122px;height:122px}
 .player-row{border-top:1px solid var(--line);padding:14px 0}.player-row:first-child{border-top:0}.player-head{display:flex;justify-content:space-between;gap:10px;align-items:center}
 .role-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.role-check{display:flex;align-items:center;gap:5px;background:#edf3ef;border-radius:6px;padding:8px 9px;font-size:13px}.role-check input{width:17px;height:17px}
 .signals{grid-template-columns:repeat(5,minmax(0,1fr))}.signal-item label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}.signal-item input{width:100%;min-height:42px;border:1px solid #bdc9c1;border-radius:6px;padding:8px}
 .count-control{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#405047}.count-control input{width:68px;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;text-align:center;background:#fff}
-.readiness-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0 18px}.readiness-item{border-left:6px solid var(--ready-color);background:#f3f7f4;padding:13px;border-radius:6px}.readiness-item strong{display:block;margin-bottom:4px}.readiness-item p{margin:0;font-size:13px}.ready{color:#246842}.not-ready{color:#9a4e1a}.admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:14px;border-top:1px solid var(--line)}.emergency-panel{margin-top:16px;padding:14px;background:#fff8df;border-left:6px solid #d19219;border-radius:6px}.emergency-panel h3{margin-bottom:8px}.handoff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px}.handoff select{min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;background:#fff}.history-list{display:grid;gap:9px}.history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}.history-row:last-child{border-bottom:0}.history-scores{font-size:13px;color:var(--muted);margin-top:4px}
+.readiness-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0 18px}.readiness-item{border-left:6px solid var(--ready-color);background:#f3f7f4;padding:13px;border-radius:6px}.readiness-item strong{display:block;margin-bottom:4px}.readiness-item p{margin:0;font-size:13px}.ready{color:#246842}.not-ready{color:#9a4e1a}.admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:14px;border-top:1px solid var(--line)}.team-create-form{display:flex;align-items:end;gap:10px}.team-create-form .field{flex:1;margin:0}.emergency-panel{margin-top:16px;padding:14px;background:#fff8df;border-left:6px solid #d19219;border-radius:6px}.emergency-panel h3{margin-bottom:8px}.handoff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px}.handoff select{min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;background:#fff}.history-list{display:grid;gap:9px}.history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}.history-row:last-child{border-bottom:0}.history-scores{font-size:13px;color:var(--muted);margin-top:4px}
 .pill{display:inline-flex;align-items:center;border-radius:999px;padding:6px 9px;background:#e9f0eb;color:#33473a;font-size:13px;font-weight:700}.pills{display:flex;gap:7px;flex-wrap:wrap}
 .mission{min-height:340px;display:grid;align-content:center;text-align:center}.mission .icon{font-size:54px;margin-bottom:14px}.mission h2{font-size:28px}.choices{display:grid;gap:10px;margin-top:18px}.choices button{width:100%;min-height:54px}.device-visual{width:min(520px,100%);aspect-ratio:3/2;margin:0 auto 16px;border:1px solid var(--line);border-radius:8px;background-image:url("/assets/device-scenes.png");background-size:300% 200%;background-repeat:no-repeat;background-color:#edf4ef}.device-status{margin:14px 0 0;padding:14px;border-left:6px solid var(--team);border-radius:6px;background:#eef6f0;text-align:left}.device-status strong{display:block;font-size:19px;margin-bottom:4px}.device-status p{margin:0;color:#365141}
 .status-row{display:flex;justify-content:space-between;gap:10px;align-items:center;margin-bottom:14px}.phase{color:#496156;font-size:13px;font-weight:700;text-transform:uppercase}
@@ -1181,7 +1259,7 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .team-score-list{display:grid;gap:9px;padding:14px 18px 18px}.team-score-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;border-left:6px solid var(--score-color);background:#f5f8f6;padding:14px;border-radius:6px}.team-score-row strong{font-size:18px}.team-score-points{font-size:24px;font-weight:700;color:#24352a}
 .competition-result{background:#fff;border:2px solid #e0a127;border-radius:8px;padding:18px;margin-bottom:16px}.competition-result h2{margin-bottom:4px}.ranking{display:grid;gap:8px;margin-top:14px}.rank-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;border-left:5px solid var(--rank-color);background:#f7f9f7;padding:11px 12px;border-radius:6px}.rank-number{font-size:20px;font-weight:700}.rank-team small{display:block;color:var(--muted);margin-top:3px}.rank-score{text-align:right}.rank-score strong{display:block}.rank-score span{font-size:12px;color:var(--muted)}
 .footer-note{text-align:center;color:#718078;font-size:12px;margin-top:16px}
-@media(max-width:850px){.grid3,.signals,.role-guide-list,.readiness-grid{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}.result-metrics{grid-template-columns:1fr}.handoff select{width:100%}}
+@media(max-width:850px){.grid3,.signals,.role-guide-list,.readiness-grid{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.team-create-form{align-items:stretch;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}.result-metrics{grid-template-columns:1fr}.handoff select{width:100%}}
 `;
 
 function layout(title, body, scripts = "") {
@@ -1226,6 +1304,13 @@ function adminPage() {
         <div id="authMessage" class="notice error" hidden></div>
       </section>
       <section id="dashboard" hidden>
+        <section class="card" style="margin-bottom:16px">
+          <div class="section-head"><div><h2>팀 만들기</h2></div></div>
+          <form class="team-create-form" onsubmit="createNewTeam(event)">
+            <div class="field"><label for="newTeamName">팀명</label><input id="newTeamName" maxlength="20" placeholder="예: 새싹팀" required></div>
+            <button type="submit">팀 추가</button>
+          </form>
+        </section>
         <div id="scores" class="scorebar"></div>
         <section id="competitionResult" class="competition-result" hidden></section>
         <section class="card" style="margin-bottom:16px">
@@ -1291,13 +1376,14 @@ async function load(){
   }catch(error){localStorage.removeItem("farm-admin-token");token="";document.getElementById("auth").hidden=false;document.getElementById("dashboard").hidden=true}
 }
 function render(){
-  document.getElementById("scores").innerHTML=["A","B","C"].map(function(id){var t=game.teams[id];return '<div class="score" style="--team:'+t.color+'"><span>'+esc(t.symbol)+' '+esc(t.name)+'</span><strong>'+t.score+'점</strong><span class="muted">참가 '+t.players.length+'명</span></div>'}).join("");
+  var ids=Object.keys(game.teams);
+  document.getElementById("scores").innerHTML=ids.map(function(id){var t=game.teams[id];return '<div class="score" style="--team:'+t.color+'"><span>'+esc(t.symbol)+' '+esc(t.name)+'</span><strong>'+t.score+'점</strong><span class="muted">참가 '+t.players.length+'명</span></div>'}).join("");
   var result=document.getElementById("competitionResult");result.hidden=!competition.complete;result.innerHTML=competition.complete?competitionHtml(competition):"";
-  document.getElementById("readiness").innerHTML=["A","B","C"].map(function(id){var t=game.teams[id],r=readiness[id]||{ready:false,playerCount:0,assignedPlayerCount:0,missingRoles:[]},missing=r.missingRoles.length?"부족: "+r.missingRoles.join(", "):"필요한 역할이 모두 있습니다.";return '<div class="readiness-item" style="--ready-color:'+(r.ready?"#287a4b":"#c97b0b")+'"><strong class="'+(r.ready?"ready":"not-ready")+'">'+esc(t.symbol)+" "+esc(t.name)+" · "+(r.ready?"준비 완료":"준비 필요")+'</strong><p>역할 배정 '+r.assignedPlayerCount+'/'+r.playerCount+'명</p><p>'+esc(missing)+'</p></div>'}).join("");
+  document.getElementById("readiness").innerHTML=ids.length?ids.map(function(id){var t=game.teams[id],r=readiness[id]||{ready:false,playerCount:0,assignedPlayerCount:0,missingRoles:[]},missing=r.missingRoles.length?"부족: "+r.missingRoles.join(", "):"필요한 역할이 모두 있습니다.";return '<div class="readiness-item" style="--ready-color:'+(r.ready?"#287a4b":"#c97b0b")+'"><strong class="'+(r.ready?"ready":"not-ready")+'">'+esc(t.symbol)+" "+esc(t.name)+" · "+(r.ready?"준비 완료":"준비 필요")+'</strong><p>역할 배정 '+r.assignedPlayerCount+'/'+r.playerCount+'명</p><p>'+esc(missing)+'</p></div>'}).join(""):'<p class="muted">등록된 팀이 없습니다.</p>';
   document.getElementById("signals").innerHTML=Object.keys(issues).map(function(id){var value=Object.prototype.hasOwnProperty.call(signalDrafts,id)?signalDrafts[id]:game.signals[id];return '<div class="signal-item"><label>'+esc(issues[id].label)+'</label><input data-signal="'+id+'" value="'+esc(value)+'" oninput="editSignal(\\''+id+'\\',this.value)"></div>'}).join("");
-  document.getElementById("teams").innerHTML=["A","B","C"].map(teamHtml).join("");
+  document.getElementById("teams").innerHTML=ids.map(teamHtml).join("");
   document.getElementById("history").innerHTML=(game.classHistory||[]).length?(game.classHistory||[]).map(historyHtml).join(""):'<p class="muted">아직 저장된 수업 기록이 없습니다.</p>';
-  ["A","B","C"].forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
+  ids.forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
 }
 function roleName(id){var role=roles.find(function(item){return item.id===id});return role?role.label:id}
 function adminActiveRole(c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return issues[c.issueId]&&issues[c.issueId].sensorRole;if(c.kind==="environment"&&c.phase==="computer")return "computer";if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return c.selectedDevice||null;if(c.kind==="fault"&&c.phase==="fault_alert")return c.targetDevice||null;if(c.kind==="fault"&&c.phase==="repair")return "engineer";return null}
@@ -1310,10 +1396,10 @@ function teamHtml(id){
   var options=t.players.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>'}).join("");
   var emergency=round&&round.status==="playing"?'<div class="emergency-panel"><h3>긴급 진행 도구</h3><p class="muted">현재 단계: '+esc(activeRole?roleName(activeRole)+" 담당 차례":challenge&&challenge.phase==="result"?"결과 확인":"진행 확인")+'</p><div class="toolbar">'+(challenge&&challenge.phase!=="result"?'<button class="secondary" onclick="restartChallenge(\\''+id+'\\')">현재 문제 다시 시작</button><button class="danger" onclick="skipChallenge(\\''+id+'\\')">이 단계 건너뛰기</button>':'')+'<button class="secondary" onclick="resumeRound(\\''+id+'\\')">멈춘 팀 진행 재개</button></div>'+(activeRole&&options?'<div class="handoff"><select id="handoff-'+id+'">'+options+'</select><button class="secondary" onclick="handoffRole(\\''+id+'\\')">'+esc(roleName(activeRole))+' 역할 넘기기</button></div>':'')+'</div>':"";
   var readyLine=r.ready?"준비 완료":r.missingRoles.length?"부족한 역할: "+r.missingRoles.join(", "):"역할 배정이 필요합니다.";
-  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>총점 '+t.score+'점</span><span class="'+(r.ready?"ready":"not-ready")+'">'+esc(readyLine)+'</span></div></div><div class="toolbar"><button class="secondary" onclick="recommendTeamRoles(\\''+id+'\\')">역할 자동 추천</button><button class="secondary" onclick="startPractice(\\''+id+'\\')">연습 시작</button><button onclick="startTeam(\\''+id+'\\')">본 게임 시작</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">팀 초기화</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div>'+emergency+'<h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
+  return '<section class="card team" style="--team:'+t.color+'"><div class="section-head"><div><h2>'+esc(t.symbol)+' '+esc(t.name)+'</h2><div class="team-meta"><span>'+roundText+'</span><span>총점 '+t.score+'점</span><span class="'+(r.ready?"ready":"not-ready")+'">'+esc(readyLine)+'</span></div></div><div class="toolbar"><button class="secondary" onclick="recommendTeamRoles(\\''+id+'\\')">역할 자동 추천</button><button class="secondary" onclick="startPractice(\\''+id+'\\')">연습 시작</button><button onclick="startTeam(\\''+id+'\\')">본 게임 시작</button><button class="danger" onclick="resetTeam(\\''+id+'\\')">팀 초기화</button><button class="danger" onclick="deleteTeam(\\''+id+'\\')">팀 삭제</button></div></div><div class="qr-wrap"><div id="qr-'+id+'" class="qr"></div><div><strong>팀 참가 QR</strong><p class="muted">'+esc(t.joinCode)+'</p><a href="/play/'+encodeURIComponent(t.joinCode)+'" target="_blank">참가 화면 열기</a></div></div>'+emergency+'<h3 style="margin-top:20px">참가자와 역할</h3>'+players+'</section>';
 }
 function competitionHtml(data){return '<h2>'+esc(data.message)+'</h2><p class="muted">세 팀이 모두 미션을 마쳐 총점을 비교했습니다.</p><div class="ranking">'+data.leaderboard.map(function(t){var s=t.summary||{};return '<div class="rank-row" style="--rank-color:'+t.color+'"><div class="rank-number">'+t.rank+'위</div><div class="rank-team"><strong>'+esc(t.symbol)+' '+esc(t.name)+'</strong><small>해결 '+(s.solved||0)+'/'+(s.total||0)+' · 기술 문제 '+(s.faultsResolved||0)+' · 최고 '+esc(s.fastestLabel||"-")+" "+formatTime(s.fastestMs)+'</small></div><div class="rank-score"><strong>'+t.score+'점</strong><span>이번 +'+t.cycleScore+'점</span></div></div>'}).join("")+'</div>'}
-async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;readiness=data.readiness||{};render()}catch(error){alert(error.message)}}
+async function act(action){try{var data=await api("/api/admin/action",{method:"POST",body:JSON.stringify(action)});game=data.state;roles=data.roles;issues=data.issues;competition=data.competition;readiness=data.readiness||{};render();return true}catch(error){alert(error.message);return false}}
 function setRole(teamId,playerId,role,checked){
   var key=teamId+":"+playerId,p=game.teams[teamId].players.find(function(x){return x.id===playerId});
   var current=roleDrafts[key]||p.roles,next=current.filter(function(x){return x!==role});
@@ -1347,8 +1433,9 @@ function flushRoleSaves(){
   });
 }
 function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
+async function createNewTeam(event){event.preventDefault();var input=document.getElementById("newTeamName"),name=input.value.trim();if(!name)return;if(await act({type:"add_team",name:name}))input.value=""}
 async function startTeam(teamId){await flushRoleSaves();if(!readiness[teamId].ready&&!confirm("이 팀은 아직 준비 완료가 아닙니다. 배정된 역할만으로 시작할까요?"))return;act({type:"start_round",teamId:teamId,count:selectedCount()})}
-async function startAll(){await flushRoleSaves();var waiting=["A","B","C"].filter(function(id){return !readiness[id].ready});if(waiting.length&&!confirm("준비가 끝나지 않은 팀이 있습니다. 배정된 역할만으로 시작할까요?"))return;act({type:"start_all",count:selectedCount()})}
+async function startAll(){await flushRoleSaves();var waiting=Object.keys(game.teams).filter(function(id){return game.teams[id].players.length&&!readiness[id].ready});if(waiting.length&&!confirm("준비가 끝나지 않은 팀이 있습니다. 배정된 역할만으로 시작할까요?"))return;act({type:"start_all",count:selectedCount()})}
 async function startPractice(teamId){await flushRoleSaves();act({type:"start_practice",teamId:teamId})}
 async function startPracticeAll(){await flushRoleSaves();act({type:"start_practice_all"})}
 async function recommendTeamRoles(teamId){await flushRoleSaves();if(confirm("현재 역할 배정을 지우고 인원에 맞게 다시 추천할까요?"))act({type:"recommend_roles",teamId:teamId})}
@@ -1358,6 +1445,7 @@ function skipChallenge(teamId){if(confirm("현재 문제를 실패 처리하고 
 function resumeRound(teamId){act({type:"resume_round",teamId:teamId})}
 function handoffRole(teamId){var select=document.getElementById("handoff-"+teamId);if(select)act({type:"handoff_role",teamId:teamId,playerId:select.value})}
 function resetTeam(teamId){if(confirm("이 팀의 점수와 현재 미션을 초기화할까요?"))act({type:"reset_team",teamId:teamId})}
+async function deleteTeam(teamId){var team=game.teams[teamId];if(team&&confirm(team.name+"을 삭제할까요? 참가자와 점수도 함께 삭제됩니다.")){await flushRoleSaves();act({type:"delete_team",teamId:teamId})}}
 function resetAll(){if(confirm("모든 팀의 점수를 초기화할까요?"))act({type:"reset_all"})}
 function clearPlayers(){if(confirm("모든 참가자의 이름과 학년을 삭제할까요? QR 코드도 새로 만들어집니다."))act({type:"clear_players"})}
 function newClass(){if(confirm("현재 결과를 수업 기록에 저장하고 새 수업을 시작할까요? 참가자·점수·진행 상태가 초기화됩니다."))act({type:"new_class"})}

@@ -27,8 +27,27 @@ function request(path, options = {}) {
 test("existing classroom state is upgraded without losing teams", async () => {
   const room = createRoom();
   const oldState = await room.state();
+  oldState.teams = Object.fromEntries(
+    [
+      ["A", "새싹팀", "#287a4b"],
+      ["B", "햇살팀", "#c97b0b"],
+      ["C", "물방울팀", "#2275a5"],
+    ].map(([id, name, color]) => [
+      id,
+      {
+        id,
+        name,
+        color,
+        joinCode: `${id}-LEGACY`,
+        score: 0,
+        players: [],
+        round: null,
+      },
+    ]),
+  );
   delete oldState.session;
   delete oldState.classHistory;
+  delete oldState.activeCycleTeamIds;
   for (const team of Object.values(oldState.teams)) delete team.stats;
   oldState.signals.high_light = "old high light";
   oldState.signals.pest = "old pest";
@@ -66,6 +85,7 @@ test("existing classroom state is upgraded without losing teams", async () => {
   assert.ok(upgraded.session.id);
   assert.deepEqual(upgraded.classHistory, []);
   assert.equal(upgraded.teams.A.name, "새싹팀");
+  assert.equal(upgraded.teams.A.symbol, "🌱");
   assert.equal(upgraded.teams.A.stats.completed, 0);
   assert.deepEqual(Object.keys(upgraded.signals), ["heat", "drought", "low_light"]);
   assert.deepEqual(upgraded.teams.A.players[0].roles, ["device_fan", "computer"]);
@@ -83,7 +103,7 @@ test("existing classroom state is upgraded without losing teams", async () => {
   );
 });
 
-test("full classroom flow supports readiness, practice, recovery, scoring, and history", async () => {
+test("teams can be freely created with unique colors, codes, and public join links", async () => {
   const room = createRoom();
   const state = await room.state();
   state.auth.adminToken = "admin-token";
@@ -103,8 +123,65 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
       ),
     );
 
+  let data;
+  for (let index = 1; index <= 15; index += 1) {
+    data = await admin({ type: "add_team", name: `자유팀 ${index}` });
+  }
+  const teams = Object.values(data.state.teams);
+  assert.equal(teams.length, 15);
+  assert.equal(new Set(teams.map((team) => team.color)).size, 15);
+  assert.equal(new Set(teams.map((team) => team.joinCode)).size, 15);
+
+  const publicData = await responseJson(await room.fetch(request("/api/public")));
+  assert.equal(publicData.teams.length, 15);
+  for (const team of publicData.teams) {
+    const page = await room.fetch(request(`/play/${team.joinCode}`));
+    assert.equal(page.status, 200);
+  }
+
+  data = await admin({ type: "delete_team", teamId: teams[7].id });
+  assert.equal(Object.keys(data.state.teams).length, 14);
+});
+
+test("full classroom flow supports readiness, practice, recovery, scoring, and history", async () => {
+  const room = createRoom();
+  let state = await room.state();
+  state.auth.adminToken = "admin-token";
+  await room.save(state);
+
+  const admin = async (action) =>
+    responseJson(
+      await room.fetch(
+        request("/api/admin/action", {
+          method: "POST",
+          headers: {
+            authorization: "Bearer admin-token",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(action),
+        }),
+      ),
+    );
+
+  let adminData;
+  for (const name of ["새싹팀", "햇살팀", "물방울팀", "임시팀"]) {
+    adminData = await admin({ type: "add_team", name });
+  }
+  const createdTeams = Object.values(adminData.state.teams);
+  assert.equal(createdTeams.length, 4);
+  assert.equal(new Set(createdTeams.map((team) => team.color)).size, 4);
+  assert.equal(new Set(createdTeams.map((team) => team.joinCode)).size, 4);
+  assert.ok(createdTeams.every((team) => team.joinCode.startsWith("TEAM-")));
+  const removedTeamId = createdTeams[3].id;
+  adminData = await admin({ type: "delete_team", teamId: removedTeamId });
+  assert.equal(adminData.state.teams[removedTeamId], undefined);
+
+  const ids = Object.keys(adminData.state.teams);
+  const [teamAId, teamBId, teamCId] = ids;
+  const teamSizes = { [teamAId]: 6, [teamBId]: 6, [teamCId]: 5 };
+  state = await room.state();
+
   const authByPlayer = new Map();
-  const teamSizes = { A: 6, B: 6, C: 5 };
   for (const team of Object.values(state.teams)) {
     for (let index = 1; index <= teamSizes[team.id]; index += 1) {
       const joined = await responseJson(
@@ -124,19 +201,19 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
     }
   }
 
-  let adminData = await admin({ type: "recommend_all_roles" });
-  for (const id of ["A", "B", "C"]) {
+  adminData = await admin({ type: "recommend_all_roles" });
+  for (const id of ids) {
     assert.equal(adminData.readiness[id].ready, true);
     assert.equal(adminData.readiness[id].assignedPlayerCount, teamSizes[id]);
     assert.deepEqual(adminData.readiness[id].missingRoles, []);
   }
   assert.ok(
-    adminData.state.teams.C.players.some(
+    adminData.state.teams[teamCId].players.some(
       (player) => player.roles.includes("computer") && player.roles.includes("engineer"),
     ),
   );
   assert.ok(
-    adminData.state.teams.A.players.every((player) => player.roles.length === 1),
+    adminData.state.teams[teamAId].players.every((player) => player.roles.length === 1),
   );
 
   const playerAction = async (playerId, action) => {
@@ -162,9 +239,9 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
     return player.id;
   };
 
-  await admin({ type: "start_practice", teamId: "A" });
+  await admin({ type: "start_practice", teamId: teamAId });
   let liveState = await room.state();
-  let team = liveState.teams.A;
+  let team = liveState.teams[teamAId];
   let challenge = team.round.challenges[0];
   assert.equal(team.round.practice, true);
   assert.equal(challenge.issueId, "heat");
@@ -207,19 +284,19 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   );
   assert.equal(wrongDeviceResponse.status, 409);
   liveState = await room.state();
-  assert.equal(liveState.teams.A.round.challenges[0].deviceStartedAt, undefined);
+  assert.equal(liveState.teams[teamAId].round.challenges[0].deviceStartedAt, undefined);
   await playerAction(playerForRole(team, "device_fan"), { type: "activate_device" });
   await playerAction(playerForRole(team, "device_fan"), { type: "stop_device" });
-  await admin({ type: "resume_round", teamId: "A" });
+  await admin({ type: "resume_round", teamId: teamAId });
 
   liveState = await room.state();
-  assert.equal(liveState.teams.A.round.status, "complete");
-  assert.equal(liveState.teams.A.score, 0);
-  assert.equal(liveState.teams.A.stats.completed, 0);
+  assert.equal(liveState.teams[teamAId].round.status, "complete");
+  assert.equal(liveState.teams[teamAId].score, 0);
+  assert.equal(liveState.teams[teamAId].stats.completed, 0);
 
-  await admin({ type: "start_round", teamId: "A", count: 1 });
+  await admin({ type: "start_round", teamId: teamAId, count: 1 });
   liveState = await room.state();
-  team = liveState.teams.A;
+  team = liveState.teams[teamAId];
   challenge = team.round.challenges[0];
   const initialRole = challenge.phase === "sensor"
     ? "sensor_integrated"
@@ -229,26 +306,26 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   );
   await admin({
     type: "handoff_role",
-    teamId: "A",
+    teamId: teamAId,
     playerId: handoffTarget.id,
   });
   liveState = await room.state();
   assert.deepEqual(
-    liveState.teams.A.players
+    liveState.teams[teamAId].players
       .filter((player) => player.roles.includes(initialRole))
       .map((player) => player.id),
     [handoffTarget.id],
   );
-  await admin({ type: "restart_challenge", teamId: "A" });
-  await admin({ type: "skip_challenge", teamId: "A" });
-  await admin({ type: "resume_round", teamId: "A" });
+  await admin({ type: "restart_challenge", teamId: teamAId });
+  await admin({ type: "skip_challenge", teamId: teamAId });
+  await admin({ type: "resume_round", teamId: teamAId });
   liveState = await room.state();
-  assert.equal(liveState.teams.A.round.status, "complete");
+  assert.equal(liveState.teams[teamAId].round.status, "complete");
 
   await admin({ type: "start_all", count: 3 });
 
   liveState = await room.state();
-  for (const id of ["A", "B", "C"]) {
+  for (const id of ids) {
     const usedDevices = liveState.teams[id].round.challenges.map((item) =>
       item.kind === "environment"
         ? {
@@ -319,19 +396,19 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
     await admin({ type: "resume_round", teamId });
   };
 
-  for (const id of ["A", "B", "C"]) {
+  for (const id of ids) {
     for (let index = 0; index < 3; index += 1) {
       const elapsedMs =
-        id === "A" && index === 0
+        id === teamAId && index === 0
           ? 31_000
-          : id === "B" && index === 0
+          : id === teamBId && index === 0
           ? 11_000
-          : id === "C" && index === 0
+          : id === teamCId && index === 0
             ? 21_000
-            : id === "C" && index === 1
+            : id === teamCId && index === 1
               ? 31_000
               : 0;
-      await solveCurrentChallenge(id, id === "A" && index === 0, elapsedMs);
+      await solveCurrentChallenge(id, id === teamAId && index === 0, elapsedMs);
     }
   }
 
@@ -344,26 +421,26 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   );
   assert.equal(adminData.competition.complete, true);
   assert.equal(adminData.competition.leaderboard.length, 3);
-  assert.equal(adminData.state.teams.A.score, 570);
-  assert.equal(adminData.state.teams.B.score, 590);
-  assert.equal(adminData.state.teams.C.score, 550);
+  assert.equal(adminData.state.teams[teamAId].score, 570);
+  assert.equal(adminData.state.teams[teamBId].score, 590);
+  assert.equal(adminData.state.teams[teamCId].score, 550);
   assert.deepEqual(
-    adminData.state.teams.A.round.challenges.map((challenge) => challenge.points),
+    adminData.state.teams[teamAId].round.challenges.map((challenge) => challenge.points),
     [170, 200, 200],
   );
-  assert.equal(adminData.state.teams.B.round.challenges[0].points, 190);
+  assert.equal(adminData.state.teams[teamBId].round.challenges[0].points, 190);
   assert.deepEqual(
-    adminData.state.teams.C.round.challenges
+    adminData.state.teams[teamCId].round.challenges
       .slice(0, 2)
       .map((challenge) => challenge.points),
     [180, 170],
   );
-  assert.equal(adminData.state.teams.A.round.summary.solved, 3);
-  assert.ok(adminData.state.teams.A.stats.hintsUsed >= 1);
+  assert.equal(adminData.state.teams[teamAId].round.summary.solved, 3);
+  assert.ok(adminData.state.teams[teamAId].stats.hintsUsed >= 1);
 
   adminData = await admin({ type: "new_class" });
   assert.equal(adminData.state.classHistory.length, 1);
-  assert.equal(adminData.state.teams.A.players.length, 0);
-  assert.equal(adminData.state.teams.A.score, 0);
-  assert.equal(adminData.state.teams.A.stats.completed, 0);
+  assert.equal(adminData.state.teams[teamAId].players.length, 0);
+  assert.equal(adminData.state.teams[teamAId].score, 0);
+  assert.equal(adminData.state.teams[teamAId].stats.completed, 0);
 });
