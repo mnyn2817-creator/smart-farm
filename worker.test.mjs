@@ -202,6 +202,10 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
   }
 
   adminData = await admin({ type: "recommend_all_roles" });
+  assert.deepEqual(
+    [...new Set(adminData.roles.map((role) => role.group))],
+    ["센서", "컴퓨터", "기기", "엔지니어"],
+  );
   for (const id of ids) {
     assert.equal(adminData.readiness[id].ready, true);
     assert.equal(adminData.readiness[id].assignedPlayerCount, teamSizes[id]);

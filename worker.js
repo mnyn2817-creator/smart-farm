@@ -4,10 +4,10 @@ const ROLE_DEFINITIONS = [
   { id: "device_fan", group: "기기", label: "환풍기 담당", symbol: "♨", description: "온도가 높을 때 환풍기를 켜고 정상 온도가 되면 끕니다." },
   { id: "device_sprinkler", group: "기기", label: "스프링클러 담당", symbol: "💧", description: "물이 부족할 때 스프링클러를 켜고 흙이 촉촉해지면 끕니다." },
   { id: "device_light", group: "기기", label: "조명 담당", symbol: "☀", description: "햇빛이 부족할 때 조명을 켜고 빛이 충분해지면 끕니다." },
-  { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
+  { id: "engineer", group: "엔지니어", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-08-04-2";
+const APP_VERSION = "2026-08-04-3";
 const SCORE_TIMER_LIMIT_MS = 30_000;
 const CHALLENGE_START_SCORE = 200;
 const CHALLENGE_SCORE_STEP_MS = 10_000;
@@ -1243,7 +1243,7 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .score strong{display:block;font-size:24px;margin-top:4px}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}.section-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .team{border-top:6px solid var(--team)}.team-meta{display:flex;gap:15px;flex-wrap:wrap;color:#56635b}.qr-wrap{display:flex;gap:14px;align-items:center}.qr{width:122px;height:122px;background:#fff}.qr img,.qr canvas{display:block;width:122px;height:122px}
 .player-row{border-top:1px solid var(--line);padding:14px 0}.player-row:first-child{border-top:0}.player-head{display:flex;justify-content:space-between;gap:10px;align-items:center}
-.role-list{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px}.role-check{display:flex;align-items:center;gap:5px;background:#edf3ef;border-radius:6px;padding:8px 9px;font-size:13px}.role-check input{width:17px;height:17px}
+.role-list{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:10px}.role-group{min-width:0;border-top:3px solid #8aa697;padding-top:8px}.role-group-title{display:block;margin-bottom:7px;color:#405047;font-size:13px}.role-group-options{display:grid;gap:6px}.role-check{display:flex;align-items:center;gap:5px;background:#edf3ef;border-radius:6px;padding:8px 9px;font-size:13px}.role-check input{width:17px;height:17px}.role-category{display:block;margin-bottom:4px;color:var(--team);font-size:12px;font-weight:700}
 .signals{grid-template-columns:repeat(5,minmax(0,1fr))}.signal-item label{display:block;font-size:13px;font-weight:700;margin-bottom:6px}.signal-item input{width:100%;min-height:42px;border:1px solid #bdc9c1;border-radius:6px;padding:8px}
 .count-control{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:700;color:#405047}.count-control input{width:68px;min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;text-align:center;background:#fff}
 .readiness-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin:14px 0 18px}.readiness-item{border-left:6px solid var(--ready-color);background:#f3f7f4;padding:13px;border-radius:6px}.readiness-item strong{display:block;margin-bottom:4px}.readiness-item p{margin:0;font-size:13px}.ready{color:#246842}.not-ready{color:#9a4e1a}.admin-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;padding-top:14px;border-top:1px solid var(--line)}.team-create-form{display:flex;align-items:end;gap:10px}.team-create-form .field{flex:1;margin:0}.emergency-panel{margin-top:16px;padding:14px;background:#fff8df;border-left:6px solid #d19219;border-radius:6px}.emergency-panel h3{margin-bottom:8px}.handoff{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:9px}.handoff select{min-height:46px;border:1px solid #bdc9c1;border-radius:7px;padding:8px;background:#fff}.history-list{display:grid;gap:9px}.history-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;padding:12px 0;border-bottom:1px solid var(--line)}.history-row:last-child{border-bottom:0}.history-scores{font-size:13px;color:var(--muted);margin-top:4px}
@@ -1259,7 +1259,7 @@ h1,h2,h3,p{margin-top:0}h1{font-size:clamp(24px,4vw,38px);margin-bottom:7px}h2{f
 .team-score-list{display:grid;gap:9px;padding:14px 18px 18px}.team-score-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:14px;border-left:6px solid var(--score-color);background:#f5f8f6;padding:14px;border-radius:6px}.team-score-row strong{font-size:18px}.team-score-points{font-size:24px;font-weight:700;color:#24352a}
 .competition-result{background:#fff;border:2px solid #e0a127;border-radius:8px;padding:18px;margin-bottom:16px}.competition-result h2{margin-bottom:4px}.ranking{display:grid;gap:8px;margin-top:14px}.rank-row{display:grid;grid-template-columns:42px minmax(0,1fr) auto;align-items:center;gap:10px;border-left:5px solid var(--rank-color);background:#f7f9f7;padding:11px 12px;border-radius:6px}.rank-number{font-size:20px;font-weight:700}.rank-team small{display:block;color:var(--muted);margin-top:3px}.rank-score{text-align:right}.rank-score strong{display:block}.rank-score span{font-size:12px;color:var(--muted)}
 .footer-note{text-align:center;color:#718078;font-size:12px;margin-top:16px}
-@media(max-width:850px){.grid3,.signals,.role-guide-list,.readiness-grid{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.team-create-form{align-items:stretch;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}.result-metrics{grid-template-columns:1fr}.handoff select{width:100%}}
+@media(max-width:850px){.grid3,.signals,.role-guide-list,.readiness-grid,.role-list{grid-template-columns:1fr}.scorebar{grid-template-columns:1fr}.shell{padding:15px}.topbar{align-items:flex-start}.section-head{align-items:flex-start;flex-direction:column}.team-create-form{align-items:stretch;flex-direction:column}.qr-wrap{align-items:flex-start}.team{padding:16px}.result-metrics{grid-template-columns:1fr}.handoff select{width:100%}}
 `;
 
 function layout(title, body, scripts = "") {
@@ -1386,13 +1386,14 @@ function render(){
   ids.forEach(function(id){var t=game.teams[id],box=document.getElementById("qr-"+id);if(box&&window.QRCode)new QRCode(box,{text:location.origin+"/play/"+encodeURIComponent(t.joinCode),width:122,height:122,correctLevel:QRCode.CorrectLevel.M})});
 }
 function roleName(id){var role=roles.find(function(item){return item.id===id});return role?role.label:id}
+function roleChoices(teamId,player){return ["센서","컴퓨터","기기","엔지니어"].map(function(group){var choices=roles.filter(function(role){return role.group===group}).map(function(role){var checked=player.roles.includes(role.id)?" checked":"";return '<label class="role-check"><input type="checkbox"'+checked+' onchange="setRole(\\''+teamId+'\\',\\''+player.id+'\\',\\''+role.id+'\\',this.checked)"> '+esc(role.label)+'</label>'}).join("");return '<div class="role-group"><strong class="role-group-title">'+esc(group)+'</strong><div class="role-group-options">'+choices+'</div></div>'}).join("")}
 function adminActiveRole(c){if(!c||c.phase==="result")return null;if(c.kind==="environment"&&c.phase==="sensor")return issues[c.issueId]&&issues[c.issueId].sensorRole;if(c.kind==="environment"&&c.phase==="computer")return "computer";if(c.kind==="environment"&&(c.phase==="device"||c.phase==="device_running"))return c.selectedDevice||null;if(c.kind==="fault"&&c.phase==="fault_alert")return c.targetDevice||null;if(c.kind==="fault"&&c.phase==="repair")return "engineer";return null}
 function formatTime(ms){if(!Number.isFinite(ms))return "-";return (ms/1000).toFixed(ms<10000?1:0)+"초"}
 function historyHtml(item){var date=new Date(item.endedAt).toLocaleString("ko-KR"),scores=item.teams.map(function(team){return team.name+" "+team.score+"점"}).join(" · ");return '<div class="history-row"><div><strong>'+esc(date)+' 수업</strong><div class="history-scores">'+esc(scores)+'</div></div><div><strong>'+esc(item.winners.join(", "))+'</strong><div class="muted">1위</div></div></div>'}
 function teamHtml(id){
   var t=game.teams[id],round=t.round,r=readiness[id]||{ready:false,missingRoles:[],unassignedPlayers:0},challenge=round&&round.challenges[round.challengeIndex],activeRole=adminActiveRole(challenge);
   var roundText=!round?"대기 중":(round.status==="complete"?round.message:(round.practice?"연습 ":"본 게임 ")+"미션 "+(round.challengeIndex+1)+"/"+round.challenges.length);
-  var players=t.players.length?t.players.map(function(p){return '<div class="player-row"><div class="player-head"><div><strong>'+esc(p.name)+'</strong> <span class="muted">'+esc(p.grade)+'학년</span></div><button class="danger" onclick="removePlayer(\\''+id+'\\',\\''+p.id+'\\')">삭제</button></div><div class="role-list">'+roles.map(function(r){var checked=p.roles.includes(r.id)?" checked":"";return '<label class="role-check"><input type="checkbox"'+checked+' onchange="setRole(\\''+id+'\\',\\''+p.id+'\\',\\''+r.id+'\\',this.checked)"> '+esc(r.label)+'</label>'}).join("")+'</div></div>'}).join(""):'<p class="muted">아직 참가한 학생이 없습니다.</p>';
+  var players=t.players.length?t.players.map(function(p){return '<div class="player-row"><div class="player-head"><div><strong>'+esc(p.name)+'</strong> <span class="muted">'+esc(p.grade)+'학년</span></div><button class="danger" onclick="removePlayer(\\''+id+'\\',\\''+p.id+'\\')">삭제</button></div><div class="role-list">'+roleChoices(id,p)+'</div></div>'}).join(""):'<p class="muted">아직 참가한 학생이 없습니다.</p>';
   var options=t.players.map(function(p){return '<option value="'+p.id+'">'+esc(p.name)+'</option>'}).join("");
   var emergency=round&&round.status==="playing"?'<div class="emergency-panel"><h3>긴급 진행 도구</h3><p class="muted">현재 단계: '+esc(activeRole?roleName(activeRole)+" 담당 차례":challenge&&challenge.phase==="result"?"결과 확인":"진행 확인")+'</p><div class="toolbar">'+(challenge&&challenge.phase!=="result"?'<button class="secondary" onclick="restartChallenge(\\''+id+'\\')">현재 문제 다시 시작</button><button class="danger" onclick="skipChallenge(\\''+id+'\\')">이 단계 건너뛰기</button>':'')+'<button class="secondary" onclick="resumeRound(\\''+id+'\\')">멈춘 팀 진행 재개</button></div>'+(activeRole&&options?'<div class="handoff"><select id="handoff-'+id+'">'+options+'</select><button class="secondary" onclick="handoffRole(\\''+id+'\\')">'+esc(roleName(activeRole))+' 역할 넘기기</button></div>':'')+'</div>':"";
   var readyLine=r.ready?"준비 완료":r.missingRoles.length?"부족한 역할: "+r.missingRoles.join(", "):"역할 배정이 필요합니다.";
@@ -1550,8 +1551,9 @@ async function act(action){
   try{var response=await fetch("/api/player/action",{method:"POST",headers:headers(),body:JSON.stringify(action)});var data=await responseData(response);if(!response.ok)throw new Error(data.error);last=data;showGame(data)}
   catch(error){alert(error.message)}
 }
-function roleInfo(id,data){return data.roles.find(function(item){return item.id===id})||{id:id,label:id,symbol:"●",description:"맡은 역할의 순서를 기다립니다."}}
+function roleInfo(id,data){return data.roles.find(function(item){return item.id===id})||{id:id,group:"역할",label:id,symbol:"●",description:"맡은 역할의 순서를 기다립니다."}}
 function roleLabel(id,data){return roleInfo(id,data).label}
+function roleDisplay(id,data){var role=roleInfo(id,data);return role.group===role.label?role.label:role.group+" · "+role.label}
 function deviceInfo(id,data){return data.devices.find(function(item){return item.id===id})||{id:id,label:id}}
 function deviceLabel(id,data){return deviceInfo(id,data).label}
 function deviceScene(id,data){return data.deviceScenes[id]||{position:"100% 100%",startLabel:"기기 작동 시작",runningTitle:"기기가 농장 상태를 조절하고 있어요",readyText:"농장 상태가 정상입니다. 기기를 멈춰 주세요.",stopLabel:"기기 작동 중지"}}
@@ -1604,18 +1606,18 @@ function showGame(data){
   document.getElementById("teamBanner").innerHTML='<div><strong>'+esc(team.symbol)+' '+esc(team.name)+'</strong><span>'+esc(player.name)+' 구조대원</span></div><div class="team-banner-symbol">'+esc(team.symbol)+'</div>';
   var result=document.getElementById("competitionResult");result.hidden=!data.competition.complete;result.innerHTML=data.competition.complete?competitionHtml(data.competition):"";
   var turnAlert=document.getElementById("turnAlert");turnAlert.hidden=!isMyTurn;turnAlert.innerHTML=isMyTurn?'<strong>지금 내 차례!</strong><span>'+esc(roleLabel(activeId,data))+' 역할을 수행하세요.</span>':"";
-  document.getElementById("roles").innerHTML=player.roles.length?player.roles.map(function(id){return '<span class="pill">'+esc(roleLabel(id,data))+'</span>'}).join(""):'<span class="pill">역할 배정 대기</span>';
+  document.getElementById("roles").innerHTML=player.roles.length?player.roles.map(function(id){return '<span class="pill">'+esc(roleDisplay(id,data))+'</span>'}).join(""):'<span class="pill">역할 배정 대기</span>';
   var currentRole=document.getElementById("currentRole");currentRole.className="role-focus"+(isMyTurn?" my-turn":"");
   if(isMyTurn){
     var active=roleInfo(activeId,data);
-    currentRole.innerHTML='<div class="role-focus-symbol">'+esc(active.symbol)+'</div><div><p class="phase">지금은 내가 움직일 차례</p><h2>'+esc(active.label)+'</h2><p>'+esc(active.description)+'</p><span class="next-turn">'+esc(nextRoleText(data,challenge))+'</span></div>';
+    currentRole.innerHTML='<div class="role-focus-symbol">'+esc(active.symbol)+'</div><div><p class="phase">'+esc(active.group)+' 역할 · 지금은 내가 움직일 차례</p><h2>'+esc(active.label)+'</h2><p>'+esc(active.description)+'</p><span class="next-turn">'+esc(nextRoleText(data,challenge))+'</span></div>';
   }else{
     var waitingTitle=!player.roles.length?"역할 배정을 기다려요":!round?"미션 시작을 기다려요":round.status==="complete"?"미션을 마쳤어요":activeId?roleLabel(activeId,data)+" 담당 차례예요":"팀원의 선택을 기다려요";
     var waitingText=!player.roles.length?"선생님이 역할을 배정하면 역할 이름과 하는 일이 표시됩니다.":activeId?"현재 "+roleLabel(activeId,data)+" 담당자가 진행하고 있습니다.":"내 역할 차례가 오면 이곳에 크게 표시됩니다.";
     currentRole.innerHTML='<div class="role-focus-symbol">…</div><div><p class="phase">현재 수행 역할</p><h2>'+esc(waitingTitle)+'</h2><p>'+esc(waitingText)+'</p>'+(challenge&&challenge.phase!=="result"?'<span class="next-turn">'+esc(nextRoleText(data,challenge))+'</span>':"")+'</div>';
   }
   document.getElementById("flowTrack").innerHTML=flowHtml(data,challenge);
-  document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
+  document.getElementById("roleGuide").innerHTML=player.roles.length?player.roles.map(function(id){var role=roleInfo(id,data),activeClass=id===activeId?" active":"";return '<div class="role-guide-item'+activeClass+'"><div class="role-symbol">'+esc(role.symbol)+'</div><div><span class="role-category">'+esc(role.group)+'</span><strong>'+esc(role.label)+'</strong><p>'+esc(role.description)+'</p></div></div>'}).join(""):'<p class="muted">아직 배정된 역할이 없습니다.</p>';
   document.getElementById("teamScores").innerHTML=data.teamScores.map(function(item){return '<div class="team-score-row" style="--score-color:'+item.color+'"><strong>'+esc(item.symbol)+' '+esc(item.name)+'</strong><span class="team-score-points">'+item.score+'점</span></div>'}).join("");
   document.getElementById("signalRules").innerHTML=Object.keys(data.issues).map(function(id){return '<div class="signal-rule"><span>'+esc(data.issues[id].label)+'</span><strong>'+esc(data.signals[id])+'</strong></div>'}).join("");
   document.getElementById("progress").innerHTML=round?round.challenges.map(function(item,index){var cls=index<round.challengeIndex?"dot done":index===round.challengeIndex?"dot on":"dot";return '<span class="'+cls+'"></span>'}).join(""):"";
