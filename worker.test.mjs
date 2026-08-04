@@ -216,6 +216,27 @@ test("full classroom flow supports readiness, practice, recovery, scoring, and h
     adminData.state.teams[teamAId].players.every((player) => player.roles.length === 1),
   );
 
+  adminData = await admin({ type: "start_round", teamId: teamAId, count: 99 });
+  const thirtyChallenges = adminData.state.teams[teamAId].round.challenges;
+  assert.equal(thirtyChallenges.length, 30);
+  const deviceCounts = thirtyChallenges.reduce((counts, item) => {
+    const deviceId = item.kind === "environment"
+      ? {
+          heat: "device_fan",
+          drought: "device_sprinkler",
+          low_light: "device_light",
+        }[item.issueId]
+      : item.targetDevice;
+    counts[deviceId] = (counts[deviceId] ?? 0) + 1;
+    return counts;
+  }, {});
+  assert.deepEqual(deviceCounts, {
+    device_fan: 10,
+    device_sprinkler: 10,
+    device_light: 10,
+  });
+  await admin({ type: "reset_team", teamId: teamAId });
+
   const playerAction = async (playerId, action) => {
     const auth = authByPlayer.get(playerId);
     return responseJson(

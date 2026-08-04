@@ -7,7 +7,7 @@ const ROLE_DEFINITIONS = [
   { id: "engineer", group: "기술", label: "엔지니어", symbol: "🔧", description: "고장 신호를 받은 뒤 알맞은 방법으로 기기를 고칩니다." },
 ];
 
-const APP_VERSION = "2026-08-04-1";
+const APP_VERSION = "2026-08-04-2";
 const SCORE_TIMER_LIMIT_MS = 30_000;
 const CHALLENGE_START_SCORE = 200;
 const CHALLENGE_SCORE_STEP_MS = 10_000;
@@ -307,7 +307,7 @@ function roleLabel(roleId) {
 
 function missionCount(value) {
   const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) ? Math.min(10, Math.max(1, parsed)) : 1;
+  return Number.isFinite(parsed) ? Math.min(30, Math.max(1, parsed)) : 1;
 }
 
 function teamReadiness(team) {
@@ -1315,7 +1315,7 @@ function adminPage() {
         <section id="competitionResult" class="competition-result" hidden></section>
         <section class="card" style="margin-bottom:16px">
           <div class="section-head"><div><h2>게임 운영</h2><p class="muted">준비 상태를 확인하고 연습 또는 본 게임을 시작합니다.</p></div>
-          <div class="toolbar"><button class="secondary" onclick="load()">화면 새로고침</button><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="10" value="3" inputmode="numeric"></label><button class="secondary" onclick="startPracticeAll()">전체 연습 시작</button><button onclick="startAll()">전체 본 게임 시작</button></div></div>
+          <div class="toolbar"><button class="secondary" onclick="load()">화면 새로고침</button><label class="count-control">문제 수 <input id="missionCount" type="number" min="1" max="30" value="3" inputmode="numeric"></label><button class="secondary" onclick="startPracticeAll()">전체 연습 시작</button><button onclick="startAll()">전체 본 게임 시작</button></div></div>
           <h3>팀 준비 상태</h3>
           <div id="readiness" class="readiness-grid"></div>
           <div class="toolbar"><button class="secondary" onclick="recommendAllRoles()">전체 역할 자동 추천</button></div>
@@ -1432,7 +1432,7 @@ function flushRoleSaves(){
     check();
   });
 }
-function selectedCount(){return Math.min(10,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
+function selectedCount(){return Math.min(30,Math.max(1,parseInt(document.getElementById("missionCount").value,10)||1))}
 async function createNewTeam(event){event.preventDefault();var input=document.getElementById("newTeamName"),name=input.value.trim();if(!name)return;if(await act({type:"add_team",name:name}))input.value=""}
 async function startTeam(teamId){await flushRoleSaves();if(!readiness[teamId].ready&&!confirm("이 팀은 아직 준비 완료가 아닙니다. 배정된 역할만으로 시작할까요?"))return;act({type:"start_round",teamId:teamId,count:selectedCount()})}
 async function startAll(){await flushRoleSaves();var waiting=Object.keys(game.teams).filter(function(id){return game.teams[id].players.length&&!readiness[id].ready});if(waiting.length&&!confirm("준비가 끝나지 않은 팀이 있습니다. 배정된 역할만으로 시작할까요?"))return;act({type:"start_all",count:selectedCount()})}
